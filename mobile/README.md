@@ -279,6 +279,13 @@ There is no `type-check` or `lint` npm script in this package — TypeScript
 errors surface via your editor or `tsc` run directly; there's no
 dedicated lint config here either.
 
+### End-to-end (Maestro)
+
+Sign-in and bounty-browsing flows, run on a real Android emulator in CI
+(`.github/workflows/mobile-e2e.yml`). See
+[`docs/E2E_TESTING.md`](docs/E2E_TESTING.md) for how to run them locally
+and why sign-in uses a dedicated `"e2e"` build profile.
+
 ## Features
 
 ### Offline Support

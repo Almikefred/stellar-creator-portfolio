@@ -248,6 +248,35 @@ export function useWalletAuth(options?: { autoStart?: boolean }) {
   // ---- Fall back to wallet signature (last resort) ----
   const fallbackToWallet = useCallback(async () => {
     if (!isMountedRef.current) return;
+
+    // E2E test mode (#1623): real wallet-signature auth needs an external
+    // wallet app (Lobstr/Freighter/etc.) to approve a WalletConnect
+    // request, which Maestro/Detox can't drive in CI — there's no wallet
+    // app installed on the emulator, and no fixture for one. This bypass
+    // takes the same state transitions a real approval would (connecting →
+    // awaiting_wallet → authenticated) but with a fixed, obviously-fake
+    // test key, so `.maestro/sign-in-flow.yaml` exercises the *app's* side
+    // of this screen deterministically.
+    //
+    // Only active when EXPO_PUBLIC_E2E_TEST_MODE=1, which only the "e2e"
+    // eas.json build profile sets — never development/preview/production.
+    if (process.env.EXPO_PUBLIC_E2E_TEST_MODE === "1") {
+      setState((s) => ({ ...s, status: "connecting", error: null, wcUri: null }));
+      await triggerHaptic("light");
+      setState((s) => ({ ...s, status: "awaiting_wallet", wcUri: null }));
+
+      const testSession: WCSession = {
+        topic: "e2e-test-topic",
+        publicKey: "G".padEnd(56, "A"),
+        expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+      };
+      await saveSession(testSession);
+      if (!isMountedRef.current) return;
+      setState((s) => ({ ...s, status: "authenticated", session: testSession, wcUri: null }));
+      telemetryCollector.logEvent({ name: "auth_attempt", value: "e2e_test_bypass", category: "auth" });
+      return;
+    }
+
     setState((s) => ({ ...s, status: "connecting", error: null, wcUri: null }));
     await triggerHaptic("light");
     telemetryCollector.logEvent({ name: "auth_attempt", value: "wallet_fallback_started", category: "auth" });

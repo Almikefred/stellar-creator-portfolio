@@ -88,6 +88,8 @@ model User {
   matchFeedback       MatchFeedback[]
   matchNotifications  MatchNotification[]
   auditLogs           AuditLog[]
+  adminSkills         AdminSkill[]
+  skillSynonyms       SkillSynonym[]
   bountyTemplates     BountyTemplate[]
   apiKeys             ApiKey[]
   endorsementsGiven   Endorsement[] @relation(name: "endorsements_given")
@@ -771,6 +773,55 @@ model FeatureFlagEvaluation {
 
   @@index([flagId, createdAt])
   @@index([userId, createdAt])
+}
+
+// ── Skill Taxonomy Admin & Synonyms — Issue #1617 ─────────────────────────────
+
+/// An admin-added skill not present in the built-in taxonomy
+/// (`lib/skills-taxonomy.ts`'s `SKILLS_TAXONOMY`). `skillId` uses the same
+/// slug shape as the built-in entries (e.g. "zig", "move-lang") so
+/// `SkillSynonym.skillId` can reference either kind uniformly.
+model AdminSkill {
+  id          String   @id @default(cuid())
+  skillId     String   @unique
+  name        String
+  /// Mirrors `SkillCategory` in lib/skills-taxonomy.ts — kept as a plain
+  /// string (validated at the API boundary) rather than a Prisma enum so
+  /// the two don't need a migration kept in lockstep by hand.
+  category    String
+  aliases     String[] @default([])
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  synonyms SkillSynonym[]
+
+  @@index([skillId])
+  @@index([category])
+}
+
+/// Admin-added search synonym for a skill. `skillId` can point at either a
+/// built-in taxonomy id or an `AdminSkill.skillId` — resolved against both
+/// at query time (see `lib/skills-taxonomy-admin.ts`), not enforced by a DB
+/// foreign key, since built-ins aren't rows in this database.
+model SkillSynonym {
+  id      String @id @default(cuid())
+  skillId String
+
+  /// Set only when `skillId` references an `AdminSkill` — lets deleting an
+  /// admin-added skill cascade-delete its synonyms. Synonyms on a built-in
+  /// skill have this null and are deleted individually.
+  adminSkillId String?
+  adminSkill   AdminSkill? @relation(fields: [adminSkillId], references: [skillId], onDelete: Cascade)
+
+  synonym     String
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@unique([skillId, synonym])
+  @@index([skillId])
 }
 
 // ── Bounty Templates — Issue #810 ─────────────────────────────────────────────

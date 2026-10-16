@@ -45,6 +45,20 @@
       }
     },
 
+    "e2e": {
+      "extends": "development",
+      "distribution": "internal",
+      "channel": "e2e",
+      "env": {
+        "EXPO_PUBLIC_APP_VARIANT": "e2e",
+        "EXPO_PUBLIC_E2E_TEST_MODE": "1"
+      },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      }
+    },
+
     "production": {
       "extends": "base",
       "distribution": "store",
