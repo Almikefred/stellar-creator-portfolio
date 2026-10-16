@@ -76,7 +76,9 @@ smoke-test result is "simulated for this implementation" — it currently
 POSTs a hardcoded `{"status": "SUCCESS", "smokeTests": "passed"}` rather
 than actually spinning up a test instance, restoring into it, and running
 real checks. Treat this drill as a placeholder for the real thing, not as
-evidence restores have actually been verified to work.
+evidence restores have actually been verified to work. Until it is, use the
+manual steps and quarterly checklist in
+[`POSTGRES_RESTORE_RUNBOOK.md`](./POSTGRES_RESTORE_RUNBOOK.md).
 
 ---
 
