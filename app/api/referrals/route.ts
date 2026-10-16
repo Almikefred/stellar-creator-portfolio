@@ -4,7 +4,7 @@ import { getServerSession } from '@/lib/auth/auth';
 import {
   generateReferralCode,
   getReferralHistory,
-  getReferralStats,
+  getReferralStatsWithChain,
   getUserCode,
   trackReferral,
 } from '@/lib/services/referral-service';
@@ -14,9 +14,13 @@ import { checkRate, clientIp } from '@/server/api/rate-limit';
  * GET  /api/referrals?action=code|stats|history   the caller's own referral data
  * POST /api/referrals                              record that the caller was referred
  *
- * Backed by lib/services/referral-service. Both methods require a session;
- * a referral is always recorded for the signed-in user, never for an id the
- * client supplies, so one account cannot farm referral rewards for others.
+ * Backed by lib/services/referral-service; `stats` also merges in the
+ * caller's unclaimed on-chain reward balance from the `referral` Soroban
+ * contract (lib/stellar/referral-contract.ts) when they have a linked
+ * wallet — see `onChainUnclaimedRewards` on the response. Both methods
+ * require a session; a referral is always recorded for the signed-in user,
+ * never for an id the client supplies, so one account cannot farm referral
+ * rewards for others.
  */
 
 const READS_PER_MINUTE = 30;
@@ -49,7 +53,7 @@ export async function GET(req: NextRequest) {
     case 'code':
       return NextResponse.json(getUserCode(userId) ?? generateReferralCode(userId));
     case 'stats':
-      return NextResponse.json(getReferralStats(userId));
+      return NextResponse.json(await getReferralStatsWithChain(userId));
     case 'history':
       return NextResponse.json({ referrals: getReferralHistory(userId) });
     default:
