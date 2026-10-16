@@ -1,0 +1,44 @@
+# Maestro E2E flow: bounty browsing (issue #1623).
+#
+# ExploreScreen (app/(app)/explore.tsx) has no auth dependency in its own
+# code — it renders static demo data (TRENDING_BOUNTIES/FEATURED_CREATORS)
+# with no session check — so this flow deep-links straight to it via the
+# "tamgora" scheme (app.json) rather than repeating the full sign-in flow
+# (see sign-in-flow.yaml for that) just to reach a screen that doesn't
+# actually require it. Expo Router strips route-group parentheses from the
+# resolved path, so app/(app)/explore.tsx is reachable at /explore.
+#
+# Run locally:
+#   maestro test .maestro/browse-bounties-flow.yaml
+appId: com.tamgora.app
+---
+- launchApp:
+    clearState: true
+- openLink: "tamgora:///explore"
+
+- assertVisible:
+    id: "explore-screen"
+
+# ── Trending bounties render with their budget/deadline meta ─────────────
+- assertVisible: "Trending Bounties"
+- assertVisible: "Brand identity for DeFi startup"
+- assertVisible: "500 XLM · 5 days left"
+
+# ── Search filters the list down to a single matching bounty ─────────────
+- tapOn: "Search bounties, creators…"
+- inputText: "copy-write"
+- assertVisible: "Copy-write landing page refresh"
+- assertNotVisible: "Brand identity for DeFi startup"
+- assertNotVisible: "Product roadmap for mobile app"
+
+# ── An empty result shows the empty state with a working "Clear search" ──
+- eraseText
+- inputText: "zzz-no-such-bounty"
+- assertVisible: "No bounties found"
+- tapOn: "Clear search"
+- assertVisible: "Brand identity for DeFi startup"
+
+# NOTE: not testing the tap-through to a bounty's detail screen here —
+# app/(app)/bounty-detail.tsx (what ExploreCard's onPress navigates to)
+# doesn't exist yet in this repo, so there's nothing real to assert on
+# the other side of that tap. Add that step once the detail screen lands.

@@ -1,0 +1,44 @@
+# Maestro E2E flow: sign-in (issue #1623).
+#
+# Walks the real first-launch auth sequence (AuthFlowNavigator):
+#   onboarding -> register -> login -> authenticated home
+#
+# Wallet-signature auth (the "Connect Wallet" button) normally requires an
+# external wallet app (Lobstr/Freighter/etc.) to approve a WalletConnect
+# session — there's no such app on the CI emulator, so this build must be
+# the "e2e" eas.json profile, which sets EXPO_PUBLIC_E2E_TEST_MODE=1. That
+# flag makes useWalletAuth.ts's fallbackToWallet() take a deterministic,
+# fixed-test-key path through the same connecting -> awaiting_wallet ->
+# authenticated states a real approval would, instead of actually opening
+# a wallet app. See the comment on that function for why.
+#
+# Run locally (after building with the e2e profile — see
+# mobile/docs/E2E_TESTING.md):
+#   maestro test .maestro/sign-in-flow.yaml
+appId: com.tamgora.app
+---
+- launchApp:
+    clearState: true
+
+# ── Onboarding ────────────────────────────────────────────────────────────
+- assertVisible: "Skip"
+- tapOn: "Skip"
+
+# ── Register screen: this run isn't registering, so follow the
+#    "Already have an account? Sign in" link to the login screen instead ──
+- assertVisible: "Sign in"
+- tapOn: "Sign in"
+
+# ── Login screen ──────────────────────────────────────────────────────────
+- assertVisible: "Tamgora"
+- assertVisible: "Connect Wallet"
+- tapOn: "Connect Wallet"
+
+# E2E test mode resolves to "authenticated" almost immediately, which
+# AuthFlowNavigator's onAuthComplete turns into a router.replace to
+# (app)/home — so the reliable signal is that the login screen itself is
+# gone, not any particular piece of home-screen content (which is
+# data-dependent and localized via i18n, both riskier to assert on here).
+- extendedWaitUntil:
+    notVisible: "Connect Wallet"
+    timeout: 15000
