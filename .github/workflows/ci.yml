@@ -24,6 +24,8 @@ jobs:
         run: pnpm run lint
       - name: Typecheck
         run: pnpm run typecheck
+      - name: i18n key parity (web + mobile locales)
+        run: pnpm run i18n:check
       - name: Unit tests
         run: pnpm test
       - name: Build
