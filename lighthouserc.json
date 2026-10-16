@@ -15,12 +15,52 @@
       }
     },
     "assert": {
+      "budgets": [
+        {
+          "path": "/",
+          "resourceSizes": [
+            { "resourceType": "script", "budget": 250 },
+            { "resourceType": "total", "budget": 500 }
+          ],
+          "timings": [
+            { "metric": "largest-contentful-paint", "budget": 2500 },
+            { "metric": "cumulative-layout-shift", "budget": 100 },
+            { "metric": "first-contentful-paint", "budget": 1800 },
+            { "metric": "interactive", "budget": 3800 }
+          ]
+        },
+        {
+          "path": "/creators",
+          "resourceSizes": [
+            { "resourceType": "script", "budget": 300 },
+            { "resourceType": "total", "budget": 600 }
+          ],
+          "timings": [
+            { "metric": "largest-contentful-paint", "budget": 2500 },
+            { "metric": "cumulative-layout-shift", "budget": 100 },
+            { "metric": "first-contentful-paint", "budget": 1800 }
+          ]
+        },
+        {
+          "path": "/bounties",
+          "resourceSizes": [
+            { "resourceType": "script", "budget": 300 },
+            { "resourceType": "total", "budget": 600 }
+          ],
+          "timings": [
+            { "metric": "largest-contentful-paint", "budget": 2500 },
+            { "metric": "cumulative-layout-shift", "budget": 100 },
+            { "metric": "first-contentful-paint", "budget": 1800 }
+          ]
+        }
+      ],
       "assertions": {
-        "categories:performance": ["warn", { "minScore": 0.85 }],
+        "categories:performance": ["error", { "minScore": 0.85 }],
         "categories:accessibility": ["error", { "minScore": 0.90 }],
-        "first-contentful-paint": ["warn", { "maxNumericValue": 2000 }],
-        "largest-contentful-paint": ["warn", { "maxNumericValue": 3000 }],
-        "cumulative-layout-shift": ["warn", { "maxNumericValue": 0.1 }]
+        "largest-contentful-paint": ["error", { "maxNumericValue": 2500 }],
+        "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1 }],
+        "first-contentful-paint": ["warn", { "maxNumericValue": 1800 }],
+        "total-blocking-time": ["warn", { "maxNumericValue": 300 }]
       }
     },
     "upload": {

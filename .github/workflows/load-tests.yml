@@ -15,6 +15,9 @@ on:
         description: 'Test to run (smoke|stress|soak|spike|sequence-collision)'
         required: false
         default: 'smoke'
+  # Nightly run at 02:00 UTC against staging — closes #1590
+  schedule:
+    - cron: '0 2 * * *'
 
 jobs:
   load-test:
@@ -32,21 +35,58 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update && sudo apt-get install -y k6
 
+      - name: Resolve test name
+        id: resolve
+        run: |
+          # Scheduled runs default to the smoke suite against staging
+          TEST="${{ github.event.inputs.test || 'smoke' }}"
+          BASE_URL="${{ github.event.inputs.base_url || vars.STAGING_URL || 'http://localhost:3000' }}"
+          RUST_API_URL="${{ github.event.inputs.rust_api_url || vars.STAGING_RUST_URL || 'http://localhost:3001' }}"
+          echo "test=$TEST" >> "$GITHUB_OUTPUT"
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "rust_api_url=$RUST_API_URL" >> "$GITHUB_OUTPUT"
+
       - name: Run load test
         env:
-          BASE_URL: ${{ github.event.inputs.base_url }}
-          RUST_API_URL: ${{ github.event.inputs.rust_api_url }}
+          BASE_URL: ${{ steps.resolve.outputs.base_url }}
+          RUST_API_URL: ${{ steps.resolve.outputs.rust_api_url }}
         run: |
           k6 run \
             -e BASE_URL=$BASE_URL \
             -e RUST_API_URL=$RUST_API_URL \
             --out json=load-test-results.json \
-            load-tests/${{ github.event.inputs.test }}.test.js
+            load-tests/${{ steps.resolve.outputs.test }}.test.js
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: load-test-results-${{ github.event.inputs.test }}
+          name: load-test-results-${{ steps.resolve.outputs.test }}-${{ github.run_id }}
           path: load-test-results.json
           retention-days: 30
+
+      - name: Notify on failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Nightly load test failed (${new Date().toISOString().slice(0,10)})`,
+              body: [
+                '## Nightly Load Test Failure',
+                '',
+                `- **Run**: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                `- **Test**: smoke`,
+                `- **Time**: ${new Date().toISOString()}`,
+                '',
+                'The p95 latency or error-rate threshold was breached. Check the uploaded results artifact and the k6 summary above.',
+                '',
+                'Thresholds (from `load-tests/config/options.js`):',
+                '- `http_req_duration p(95) < 500ms`',
+                '- `http_req_failed rate < 1%`',
+                '- `checks rate > 95%`',
+              ].join('\n'),
+              labels: ['performance', 'load-test', 'automated'],
+            });
