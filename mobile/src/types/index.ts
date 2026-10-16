@@ -296,6 +296,19 @@ export interface QueuedOperation {
   createdAt: string;
   /** Epoch ms — op is not retried until Date.now() >= nextRetryAt */
   nextRetryAt: number;
+  /**
+   * Field names the local payload actually changed, used by `merge`-strategy
+   * conflict resolution (see `offline/ConflictResolution.ts`) to decide which
+   * fields the local write should keep when the server returns a conflicting
+   * version. Omit to merge every field present in `payload`.
+   */
+  changedFields?: readonly string[];
+  /**
+   * ISO timestamp the local write was made at, used by `last-write-wins`
+   * conflict resolution to compare against the server's `updatedAt`. Falls
+   * back to a top-level `updatedAt` in `payload` when not set.
+   */
+  localUpdatedAt?: string;
 }
 
 // ─── Multi-Sig Approval ───────────────────────────────────────────────────────

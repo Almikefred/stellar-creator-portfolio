@@ -13,6 +13,16 @@ export type { OfflineStatusBadgeProps } from './OfflineStatusBadge';
 export { enqueue, dequeue, markRetry, getRetryableOps, getPendingOps, getDeadLetterOps, requeueFromDead, clearDeadLetter, clearQueue, pendingCount, deadLetterCount } from './OfflineQueue';
 export { setCache, getCache, invalidateCache, invalidateAll } from './OfflineStore';
 
+// Offline conflict resolution
+export {
+  getConflictStrategy,
+  entityFromEndpoint,
+  resolveConflict,
+  resolveOperationConflict,
+  ENTITY_CONFLICT_POLICY,
+} from './ConflictResolution';
+export type { ConflictStrategy } from './ConflictResolution';
+
 // Offline hooks
 export { useOfflineData } from './useOfflineData';
 export { useNetworkStatus } from './useNetworkStatus';
