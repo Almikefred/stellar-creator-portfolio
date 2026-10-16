@@ -51,30 +51,41 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Fetch transactions in date range
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        createdAt: {
-          gte: startDate,
-          lte: endDate,
-        },
-      },
-      select: {
-        createdAt: true,
-        amount: true,
-      },
-    });
-
-    // Group by month and sum fees
+    // Sum fees per month without ever holding the full transaction set in
+    // memory: an unbounded date range can match far more rows than fit
+    // comfortably in a single array, but the aggregated output (one row
+    // per month) is always small. Page through transactions by id cursor
+    // and fold each batch into the (bounded-size) monthlyRevenue map
+    // immediately, discarding the batch once it's been folded in.
+    const EXPORT_BATCH_SIZE = 1000;
     const monthlyRevenue = new Map<string, number>();
+    let cursor: string | null = null;
 
-    for (const tx of transactions) {
-      const date = tx.createdAt;
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    for (;;) {
+      const batch = await prisma.transaction.findMany({
+        where: {
+          createdAt: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+        select: { id: true, createdAt: true, amount: true },
+        orderBy: { id: 'asc' },
+        take: EXPORT_BATCH_SIZE,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
 
-      // Assuming 10% platform fee
-      const fee = Math.floor(tx.amount * 0.1);
-      monthlyRevenue.set(monthKey, (monthlyRevenue.get(monthKey) || 0) + fee);
+      for (const tx of batch) {
+        const date = tx.createdAt;
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+        // Assuming 10% platform fee
+        const fee = Math.floor(tx.amount * 0.1);
+        monthlyRevenue.set(monthKey, (monthlyRevenue.get(monthKey) || 0) + fee);
+      }
+
+      if (batch.length < EXPORT_BATCH_SIZE) break;
+      cursor = batch[batch.length - 1].id;
     }
 
     const reportData = Array.from(monthlyRevenue.entries())
