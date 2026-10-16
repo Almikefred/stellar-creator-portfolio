@@ -100,6 +100,10 @@ Network passphrase: `Test SDF Network ; September 2015`
 > and `contracts/analytics` (on-chain event analytics). These exist only at the top level
 > and are likewise not built or tested by CI.
 
+See [`docs/architecture.md`](./docs/architecture.md) for a platform-wide
+diagram of how the Next.js app, tRPC/GraphQL/REST, the Rust API, realtime
+servers, Soroban contracts, mobile app, and their data stores fit together.
+
 ## Getting Started
 
 ### Prerequisites
@@ -312,6 +316,7 @@ The app uses `output: 'standalone'` (Next.js) and can be deployed to:
 2. The pre-commit hook runs TypeScript check (warning), secret scan (gitleaks, if installed), and a 10 MB file-size guard
 3. Soroban contracts require `overflow-checks = true` in `[profile.release]`
 4. Looking for open work? [`docs/IMPLEMENTATION_NOTES.md`](./docs/IMPLEMENTATION_NOTES.md) tracks partially-scoped backlog items (e.g. STT integration, escrow slippage protection, OCR KYC) with implementation specs already written out
+5. Deploying or upgrading a Soroban contract? See [`docs/contracts.md`](./docs/contracts.md) for how CI deploys to Testnet/Mainnet, where the resulting contract addresses go, and how to upgrade a live contract safely
 
 ## License
 

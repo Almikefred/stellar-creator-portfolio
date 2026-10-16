@@ -88,6 +88,8 @@ model User {
   matchFeedback       MatchFeedback[]
   matchNotifications  MatchNotification[]
   auditLogs           AuditLog[]
+  adminSkills         AdminSkill[]
+  skillSynonyms       SkillSynonym[]
   bountyTemplates     BountyTemplate[]
   apiKeys             ApiKey[]
   endorsementsGiven   Endorsement[] @relation(name: "endorsements_given")
@@ -95,7 +97,8 @@ model User {
   testimonials        Testimonial[] @relation("testimonial_creator")
   clientTestimonials  Testimonial[] @relation("testimonial_client")
   projects            Project[]
-  pushDeviceTokens    PushDeviceToken[]
+  teamsOwned          Team[]        @relation("team_owner")
+  teamMemberships     TeamMember[]
 
   @@index([email])
   @@index([suspendedAt])
@@ -150,6 +153,16 @@ model CreatorProfile {
   figmaUrl          String?
   linkedinUrl       String?
   websiteUrl        String?
+  /// Whether this creator is currently open to new bounty applications.
+  /// Matching (see lib/matching-engine.ts) excludes creators where this is
+  /// false, regardless of how well they'd otherwise score.
+  acceptingWork     Boolean          @default(true)
+  /// Rate card (issue #1609) — all optional since existing creators have
+  /// none set; matching falls back to its completedProjects-based budget
+  /// heuristic when neither rate field is present.
+  hourlyRate        Float?
+  projectRateMin    Float?
+  projectRateMax    Float?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -160,6 +173,7 @@ model CreatorProfile {
   @@index([userId])
   @@index([discipline])
   @@index([verificationTier])
+  @@index([acceptingWork])
 }
 
 /// Immutable audit trail of tier changes
@@ -261,6 +275,7 @@ model Bounty {
   difficulty  BountyDifficulty @default(beginner)
   applications BountyApplication[]
   testimonials Testimonial[]
+  reviews      Review[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -295,12 +310,19 @@ model BountyApplication {
   proposedBudget Int
   timeline       Int      // days
   status         ApplicationStatus @default(PENDING)
+  /// Set when this is a team/agency application (issue #1610) — `applicant`
+  /// is then the team's primary contact, and payout on acceptance should
+  /// split across `team.members` per their `payoutSplitPercent`. Null for
+  /// an ordinary solo application.
+  teamId         String?
+  team           Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@unique([bountyId, applicantId])
   @@index([bountyId])
   @@index([applicantId])
+  @@index([teamId])
   @@index([status])
 }
 
@@ -309,6 +331,52 @@ enum ApplicationStatus {
   ACCEPTED
   REJECTED
   WITHDRAWN
+}
+
+// ── Teams / agencies (issue #1610) ────────────────────────────────────────
+//
+// A team lets several creators apply to a bounty together with an agreed
+// payout split. This PR implements the team model and team-application
+// flow (app/api/teams/route.ts, app/api/bounties/[id]/apply/route.ts).
+//
+// Deferred to a follow-up, per this issue's own "L — consider splitting
+// into several PRs" sizing: enforcing the split when escrow actually pays
+// out. `lib/escrow/escrow-transaction-handler.ts`'s `releaseEscrowFunds`
+// credits a single `creatorId` and has no link back to the `Bounty` /
+// `BountyApplication` it's for at all (neither `Escrow` nor the functions
+// that call it take an application/bounty id) — that's a pre-existing gap
+// this PR did not introduce. Teaching it to split across
+// `TeamMember.payoutSplitPercent` needs that link added first, which is
+// its own scoped change distinct from the team model itself.
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User     @relation("team_owner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members      TeamMember[]
+  applications BountyApplication[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+model TeamMember {
+  id                 String   @id @default(cuid())
+  teamId             String
+  team               Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Share of the bounty payout this member receives on release (0-100).
+  /// A team's members must sum to exactly 100 — enforced in
+  /// app/api/teams/route.ts; Prisma/Postgres has no built-in cross-row
+  /// CHECK for that here.
+  payoutSplitPercent Int
+  createdAt          DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
 }
 
 model Review {
@@ -323,9 +391,16 @@ model Review {
   helpfulCount      Int          @default(0)
   notHelpfulCount   Int          @default(0)
   status            ReviewStatus @default(PENDING)
+  /// The completed bounty this review is about (issue #1608) — required by
+  /// new reviews (enforced in app/api/creators/reviews/route.ts, not here,
+  /// since existing rows predate this column and have none). Also used to
+  /// prevent more than one review per reviewer per engagement.
+  bountyId          String?
+  bounty            Bounty?      @relation(fields: [bountyId], references: [id], onDelete: SetNull)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
+  @@unique([reviewerId, bountyId])
   @@index([creatorId])
   @@index([reviewerId])
   @@index([status])
@@ -733,6 +808,55 @@ model FeatureFlagEvaluation {
 
   @@index([flagId, createdAt])
   @@index([userId, createdAt])
+}
+
+// ── Skill Taxonomy Admin & Synonyms — Issue #1617 ─────────────────────────────
+
+/// An admin-added skill not present in the built-in taxonomy
+/// (`lib/skills-taxonomy.ts`'s `SKILLS_TAXONOMY`). `skillId` uses the same
+/// slug shape as the built-in entries (e.g. "zig", "move-lang") so
+/// `SkillSynonym.skillId` can reference either kind uniformly.
+model AdminSkill {
+  id          String   @id @default(cuid())
+  skillId     String   @unique
+  name        String
+  /// Mirrors `SkillCategory` in lib/skills-taxonomy.ts — kept as a plain
+  /// string (validated at the API boundary) rather than a Prisma enum so
+  /// the two don't need a migration kept in lockstep by hand.
+  category    String
+  aliases     String[] @default([])
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  synonyms SkillSynonym[]
+
+  @@index([skillId])
+  @@index([category])
+}
+
+/// Admin-added search synonym for a skill. `skillId` can point at either a
+/// built-in taxonomy id or an `AdminSkill.skillId` — resolved against both
+/// at query time (see `lib/skills-taxonomy-admin.ts`), not enforced by a DB
+/// foreign key, since built-ins aren't rows in this database.
+model SkillSynonym {
+  id      String @id @default(cuid())
+  skillId String
+
+  /// Set only when `skillId` references an `AdminSkill` — lets deleting an
+  /// admin-added skill cascade-delete its synonyms. Synonyms on a built-in
+  /// skill have this null and are deleted individually.
+  adminSkillId String?
+  adminSkill   AdminSkill? @relation(fields: [adminSkillId], references: [skillId], onDelete: Cascade)
+
+  synonym     String
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@unique([skillId, synonym])
+  @@index([skillId])
 }
 
 // ── Bounty Templates — Issue #810 ─────────────────────────────────────────────

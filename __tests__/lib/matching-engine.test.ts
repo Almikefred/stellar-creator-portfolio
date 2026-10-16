@@ -97,6 +97,36 @@ describe('matching-engine', () => {
     expect(ranked).toHaveLength(2)
   })
 
+  it('rankCreatorsForBounty excludes creators not accepting work (issue #1609)', () => {
+    const bounty = sampleBounty()
+    const creators = [
+      sampleCreator({ profileId: '1', userId: 'u1', acceptingWork: true }),
+      sampleCreator({ profileId: '2', userId: 'u2', acceptingWork: false }),
+      // Not set at all — treated as available, for backward compatibility.
+      sampleCreator({ profileId: '3', userId: 'u3' }),
+    ]
+    const ranked = rankCreatorsForBounty(bounty, creators, 'control', 10)
+    expect(ranked.map((r) => r.creator.profileId)).toEqual(['1', '3'])
+  })
+
+  it('budgetFit prefers a declared rate card over the completedProjects heuristic (issue #1609)', () => {
+    // $8000 is above the completedProjects=0 heuristic's soft range
+    // ($300–$5000), so without a rate card this scores as a poor fit.
+    const bounty = sampleBounty({ budget: 8000 })
+    const noRateCard = scoreCreatorBountyPair(bounty, sampleCreator({ completedProjects: 0 }))
+    expect(noRateCard.components.budgetFit).toBeLessThan(1)
+
+    // Same creator, but with a declared project rate range that covers
+    // $8000: fit should be perfect even though completedProjects didn't
+    // change — the rate card takes priority over the heuristic.
+    const withRateCard = scoreCreatorBountyPair(
+      bounty,
+      sampleCreator({ completedProjects: 0, projectRateMin: 5000, projectRateMax: 10000 }),
+    )
+    expect(withRateCard.components.budgetFit).toBe(1)
+    expect(withRateCard.components.budgetFit).toBeGreaterThan(noRateCard.components.budgetFit)
+  })
+
   it('aggregateStrategyInsights computes helpful rates', () => {
     const out = aggregateStrategyInsights([
       { strategy: 'control', helpful: true },

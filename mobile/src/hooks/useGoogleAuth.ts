@@ -13,11 +13,21 @@
  * `stellar-api` service. Intentional for now (identity lives in Next.js),
  * but worth knowing if you're wiring up anything else here.
  *
- * TODO: untested end-to-end — no device/simulator available to exercise the
- * native Google consent screen against, and this needs real per-platform
- * GOOGLE_*_CLIENT_ID values from Google Cloud Console before it can work at
- * all. The returned user record also isn't yet a session token the rest of
- * the app can use for authenticated calls — see the TODO in the endpoint.
+ * TODO: still untested end-to-end, and not reachable from any screen yet —
+ * nothing in src/screens/ or app/ calls useGoogleAuth().signIn(). #1623
+ * added real Maestro E2E coverage for this app's actual sign-in path
+ * (wallet-signature auth via useWalletAuth.ts — see
+ * .maestro/sign-in-flow.yaml and mobile/docs/E2E_TESTING.md) but
+ * deliberately left this one alone: driving a real Google account-consent
+ * screen from a CI emulator needs a test Google account and consent-screen
+ * automation, neither of which exist here, plus real per-platform
+ * GOOGLE_*_CLIENT_ID values from Google Cloud Console before it can work
+ * at all. Once this hook is wired into a screen, the same test-mode-flag
+ * pattern used in useWalletAuth.ts (EXPO_PUBLIC_E2E_TEST_MODE) is the
+ * straightforward way to add a Maestro flow for it without needing a real
+ * Google consent screen in CI. The returned user record also isn't yet a
+ * session token the rest of the app can use for authenticated calls — see
+ * the TODO in the endpoint.
  */
 
 import { useCallback, useEffect, useState } from 'react';
