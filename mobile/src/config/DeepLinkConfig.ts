@@ -2,12 +2,6 @@
  * DeepLinkConfig — Issue #543
  * "Configure standard Deep-Linking logic enabling URL interceptions globally"
  *
- * Defines:
- *  - URL scheme + universal link prefixes
- *  - Route-to-screen mapping (linking config for react-navigation)
- *  - Deep-link parser utility
- *  - Incoming URL handler (initial URL + subscription)
- *
  * Supported deep-link patterns:
  *   stellar://creator/:id          → CreatorProfile screen
  *   stellar://freelancers          → FreelancerDirectory screen
@@ -18,6 +12,7 @@
  *   stellar://bounty/:id           → BountyDetail screen
  *   stellar://verify?token=...     → EmailVerification screen
  *   stellar://payment/complete     → PaymentComplete screen
+ *   stellar://settings/notifications → NotificationSettings screen
  *
  * Universal links (HTTPS):
  *   https://stellar.app/creator/:id
@@ -28,261 +23,24 @@
  *   https://stellar.app/bounty/:id
  *   https://stellar.app/verify
  *   https://stellar.app/payment/complete
- */
-
-import { Linking } from "react-native";
-import type { LinkingOptions } from "@react-navigation/native";
-import type { RootStackParamList } from "../types";
-
-// ─── URL prefixes ─────────────────────────────────────────────────────────────
-
-export const DEEP_LINK_PREFIXES = [
-  "stellar://",
-  "https://stellar.app",
-  "https://www.stellar.app",
-] as const;
-
-// ─── Route path map ───────────────────────────────────────────────────────────
-
-/**
- * Maps react-navigation screen names to URL path patterns.
- * Nested navigators use the dot notation: "MainTabs/Profile".
- */
-export const DEEP_LINK_CONFIG: LinkingOptions<RootStackParamList>["config"] = {
-  screens: {
-    MainTabs: {
-      screens: {
-        Home: "",
-        Dashboard: "dashboard",
-        Profile: "profile",
-        Activity: "activity",
-        Settings: "settings",
-      },
-    },
-    Dashboard: "dashboard/:period?",
-    LanguageSettings: "settings/language",
-    // Extended screens (added by issues #542–#545)
-    CreatorProfile: "creator/:creatorId",
-    FreelancerDirectory: "freelancers",
-    FreelancerProfile: "freelancers/:creatorId",
-    Messaging: "messages/:conversationId",
-    ImagePicker: "upload",
-    StreamHost: "stream/:roomId/host",
-    StreamViewer: "stream/:roomId",
-    BountyDetail: "bounty/:bountyId",
-    EmailVerification: "verify",
-    PaymentComplete: "payment/complete",
-    NotificationSettings: "settings/notifications",
-  } as any, // cast needed until extended param list is added
-};
-
-// ─── Full linking options object ──────────────────────────────────────────────
-
-/**
- * Pass this directly to <NavigationContainer linking={...} />.
  *
- * Example:
- *   import { LINKING_OPTIONS } from '../config/DeepLinkConfig';
- *   <NavigationContainer linking={LINKING_OPTIONS} ...>
- */
-export const LINKING_OPTIONS: LinkingOptions<RootStackParamList> = {
-  prefixes: [...DEEP_LINK_PREFIXES],
-  config: DEEP_LINK_CONFIG,
-
-  /**
-   * Custom getInitialURL — handles cold-start deep links.
-   * Falls back to Linking.getInitialURL() which covers both
-   * custom schemes and universal links.
-   */
-  async getInitialURL() {
-    const url = await Linking.getInitialURL();
-    return url ?? undefined;
-  },
-
-  /**
-   * Custom subscribe — handles warm/hot-start deep links.
-   * Returns an unsubscribe function as required by react-navigation.
-   */
-  subscribe(listener) {
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      listener(url);
-    });
-    return () => subscription.remove();
-  },
-};
-
-// ─── Parsed deep-link type ────────────────────────────────────────────────────
-
-export type DeepLinkRoute =
-  | { screen: "Home" }
-  | { screen: "Dashboard"; params?: { period?: string } }
-  | { screen: "CreatorProfile"; params: { creatorId: string } }
-  | { screen: "FreelancerDirectory" }
-  | { screen: "FreelancerProfile"; params: { creatorId: string } }
-  | { screen: "Messaging"; params: { conversationId: string } }
-  | { screen: "ImagePicker" }
-  | { screen: "StreamHost"; params: { roomId: string } }
-  | { screen: "StreamViewer"; params: { roomId: string } }
-  | { screen: "LanguageSettings" }
-  | { screen: "NotificationSettings" }
-  | { screen: "BountyDetail"; params: { bountyId: string } }
-  | { screen: "EmailVerification"; params?: { token?: string } }
-  | { screen: "PaymentComplete"; params?: { paymentId?: string; status?: string } }
-  | { screen: "Unknown"; url: string };
-
-// ─── URL parser ───────────────────────────────────────────────────────────────
-
-/**
- * Parses a raw deep-link URL into a typed route descriptor.
- * Handles both custom scheme (stellar://) and universal links (https://stellar.app).
- *
- * @example
- *   parseDeepLink('stellar://creator/alex-studio')
- *   // → { screen: 'CreatorProfile', params: { creatorId: 'alex-studio' } }
- *
- *   parseDeepLink('https://stellar.app/freelancers')
- *   // → { screen: 'FreelancerDirectory' }
- */
-export function parseDeepLink(url: string): DeepLinkRoute {
-  // Normalise: strip scheme + host to get the path, preserve query string separately
-  let raw = url;
-  for (const prefix of DEEP_LINK_PREFIXES) {
-    if (url.startsWith(prefix)) {
-      raw = url.slice(prefix.length);
-      break;
-    }
-  }
-
-  const [pathPart, queryPart] = raw.split("?");
-  const path = pathPart.replace(/^\/+/, "").split("#")[0];
-
-  const queryParams: Record<string, string> = {};
-  if (queryPart) {
-    queryPart.split("&").forEach((pair) => {
-      const [k, v] = pair.split("=");
-      if (k) queryParams[decodeURIComponent(k)] = decodeURIComponent(v ?? "");
-    });
-  }
-
-  const segments = path.split("/").filter(Boolean);
-  const [first, second] = segments;
-
-  switch (first) {
-    case undefined:
-    case "":
-      return { screen: "Home" };
-
-    case "dashboard":
-      return {
-        screen: "Dashboard",
-        params: second ? { period: second } : undefined,
-      };
-
-    case "creator":
-      if (second)
-        return { screen: "CreatorProfile", params: { creatorId: second } };
-      return { screen: "FreelancerDirectory" };
-
-    case "freelancers":
-      if (second)
-        return { screen: "FreelancerProfile", params: { creatorId: second } };
-      return { screen: "FreelancerDirectory" };
-
-    case "messages":
-      if (second)
-        return { screen: "Messaging", params: { conversationId: second } };
-      return { screen: "Home" };
-
-    case "upload":
-      return { screen: "ImagePicker" };
-
-    case "stream":
-      if (!second) return { screen: "Unknown", url };
-      if (segments[2] === "host") {
-        return { screen: "StreamHost", params: { roomId: second } };
-      }
-      return { screen: "StreamViewer", params: { roomId: second } };
-
-    case "bounty":
-      if (second) return { screen: "BountyDetail", params: { bountyId: second } };
-      return { screen: "Home" };
-
-    case "verify":
-      return { screen: "EmailVerification", params: queryParams.token ? { token: queryParams.token } : undefined };
-
-    case "payment":
-      if (second === "complete") {
-        return {
-          screen: "PaymentComplete",
-          params: {
-            paymentId: queryParams.paymentId,
-            status: queryParams.status,
-          },
-        };
-      }
-      return { screen: "Home" };
-
-    case "settings":
-      if (second === "language") return { screen: "LanguageSettings" };
-      if (second === "notifications") return { screen: "NotificationSettings" };
-      return { screen: "Home" };
-
-    case "profile":
-    case "activity":
-    case "home":
-      return { screen: "Home" };
-
-    default:
-      return { screen: "Unknown", url };
-  }
-}
-
-// ─── Deep-link handler hook ───────────────────────────────────────────────────
-
-/**
- * useDeepLinkHandler — subscribes to incoming deep links and calls
- * the provided handler with a parsed DeepLinkRoute.
- *
- * Usage:
- *   useDeepLinkHandler((route) => {
- *     if (route.screen === 'CreatorProfile') {
- *       navigation.navigate('CreatorProfile', route.params);
- *     }
- *   });
- */
-import { useEffect } from "react";
-
-export function useDeepLinkHandler(
-  handler: (route: DeepLinkRoute) => void,
-): void {
-  useEffect(() => {
-    // Handle cold-start URL
-    Linking.getInitialURL().then((url) => {
-      if (url) handler(parseDeepLink(url));
-    });
-
-    // Handle warm/hot-start URLs
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      handler(parseDeepLink(url));
-    });
-
-    return () => subscription.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-}
-
-// ─── URL builder ──────────────────────────────────────────────────────────────
-
-/**
- * Builds a deep-link URL for sharing or programmatic navigation.
- *
- * Implementation lives in ./deepLinks/ — this file re-exports it so existing
- * imports of "config/DeepLinkConfig" keep working:
- *   routes.ts             prefixes + react-navigation path map
- *   linkingOptions.ts     LINKING_OPTIONS for <NavigationContainer>
- *   parser.ts             DeepLinkRoute type + parseDeepLink()
- *   useDeepLinkHandler.ts hook for handling incoming links
- *   builders.ts           buildDeepLink() / buildUniversalLink()
+ * This file used to carry a full, standalone copy of the deep-link logic
+ * (prefixes, path map, parser, hook, builders) alongside re-exports of
+ * the exact same names from ./deepLinks/* below — two declarations of
+ * `DEEP_LINK_PREFIXES`, `DEEP_LINK_CONFIG`, `LINKING_OPTIONS`,
+ * `DeepLinkRoute`, `parseDeepLink` and `useDeepLinkHandler` in one
+ * module, which is a duplicate-export error under TypeScript's isolated
+ * modules / `tsc` (and mobile/ has no CI typecheck job wired up today —
+ * see issue #1627/#1628's CI work for the i18n equivalent of that gap —
+ * so nothing had caught it). It also meant the copy that was actually
+ * live — the one `AppNavigator.tsx` got via `import { LINKING_OPTIONS }
+ * from "../config/DeepLinkConfig"` — was the OLD inline implementation,
+ * not the validated ./deepLinks/ module below. Fixing #1624's reported
+ * host-spoofing / unvalidated-params gap in ./deepLinks/parser.ts alone
+ * would not have actually reached the running app's real navigation
+ * wiring. Collapsing this file down to pure re-exports (its own doc
+ * comment already said that's what it was for) fixes the compile error
+ * and makes AppNavigator.tsx's LINKING_OPTIONS the validated one.
  */
 
 export { DEEP_LINK_PREFIXES, DEEP_LINK_CONFIG } from "./deepLinks/routes";

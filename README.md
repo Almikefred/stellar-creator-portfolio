@@ -100,6 +100,10 @@ Network passphrase: `Test SDF Network ; September 2015`
 > and `contracts/analytics` (on-chain event analytics). These exist only at the top level
 > and are likewise not built or tested by CI.
 
+See [`docs/architecture.md`](./docs/architecture.md) for a platform-wide
+diagram of how the Next.js app, tRPC/GraphQL/REST, the Rust API, realtime
+servers, Soroban contracts, mobile app, and their data stores fit together.
+
 ## Getting Started
 
 ### Prerequisites

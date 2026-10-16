@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 /**
- * Translation management: ensure every locale file has the same keys as `en.json`
- * (fails CI if coverage drops below threshold).
+ * Translation management (issue #1628): ensure every locale file has
+ * exactly the same keys as `en.json` — fails CI if any locale is missing
+ * a key present in the base locale.
+ *
+ * This used to allow up to 10% of keys to be missing (MIN_COVERAGE =
+ * 0.9) and wasn't wired into any CI workflow or npm script, so it never
+ * actually ran. The acceptance criterion for #1628 is "All locales have
+ * English keys," not "most of them," so this now requires exact parity;
+ * see `pnpm run i18n:web` (and `i18n:check` for web + mobile together)
+ * and the `frontend` job in `.github/workflows/ci.yml`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +18,6 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = path.join(__dirname, '..', 'public', 'locales');
 const BASE = 'en';
-const MIN_COVERAGE = 0.9;
 
 function flattenKeys(obj, prefix = '') {
   const keys = [];
@@ -43,33 +50,27 @@ function main() {
   }
 
   const baseKeys = new Set(flattenKeys(loadLocale(BASE)));
-  let worst = 1;
+  let failed = false;
 
   for (const code of codes) {
     if (code === BASE) continue;
     const keys = new Set(flattenKeys(loadLocale(code)));
-    let present = 0;
-    for (const k of baseKeys) {
-      if (keys.has(k)) present += 1;
-    }
-    const coverage = baseKeys.size === 0 ? 1 : present / baseKeys.size;
-    worst = Math.min(worst, coverage);
     const missing = [...baseKeys].filter((k) => !keys.has(k));
     const extra = [...keys].filter((k) => !baseKeys.has(k));
     if (missing.length || extra.length) {
       console.error(`\n[${code}] key parity vs ${BASE}:`);
-      if (missing.length) console.error('  missing:', missing.slice(0, 20), missing.length > 20 ? '...' : '');
-      if (extra.length) console.error('  extra:', extra.slice(0, 20), extra.length > 20 ? '...' : '');
+      if (missing.length) console.error('  missing:', missing);
+      if (extra.length) console.error('  extra:', extra);
     }
-    if (coverage < MIN_COVERAGE) {
-      console.error(`\n[${code}] coverage ${(coverage * 100).toFixed(1)}% < ${MIN_COVERAGE * 100}%`);
-      process.exit(1);
-    }
+    if (missing.length) failed = true;
   }
 
-  console.log(
-    `i18n: ${codes.length} locale files; ${baseKeys.size} keys in ${BASE}; worst-case parity vs ${BASE}: ${(worst * 100).toFixed(1)}%`,
-  );
+  if (failed) {
+    console.error('\ni18n: one or more locales are missing keys present in en.json — fix before merging.');
+    process.exit(1);
+  }
+
+  console.log(`i18n: ${codes.length} locale files; ${baseKeys.size} keys in ${BASE}; all locales match.`);
 }
 
 main();

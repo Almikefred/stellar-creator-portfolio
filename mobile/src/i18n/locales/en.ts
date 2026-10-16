@@ -21,6 +21,7 @@ const en = {
     minutesAgo: '{{count}} min ago',
     hoursAgo: '{{count}}h ago',
     daysAgo: '{{count}}d ago',
+    entries: 'Entries',
   },
 
   validation: {
@@ -87,6 +88,33 @@ const en = {
     ratingDistribution: 'Rating Distribution',
     recentReviews: 'Recent Reviews',
     seeAllReviews: 'See all {{count}} reviews',
+    // Reputation card (ReputationCard.tsx) and the simplified submission
+    // form (RatingSubmission.tsx, RatingList.tsx) reuse this namespace
+    // with their own, shorter labels rather than the longer review-flow
+    // ones above.
+    reputation: 'Reputation',
+    quality: 'Quality',
+    reliability: 'Reliability',
+    communication: 'Communication',
+    responseRate: 'Response rate',
+    completionRate: 'Completion rate',
+    badges: 'Badges',
+    viewDetails: 'View details',
+    rate: 'Rate',
+    title: 'Title',
+    titlePlaceholder: 'Summarise your experience',
+    review: 'Review',
+    reviewPlaceholder: 'Share details about your experience…',
+    pros: 'Pros',
+    prosPlaceholder: 'What went well?',
+    cons: 'Cons',
+    consPlaceholder: 'What could be improved?',
+    submit: 'Submit',
+    verified: 'Verified',
+    delete: 'Delete',
+    loadingMore: 'Loading more…',
+    end: "You've reached the end",
+    retry: 'Retry',
   },
   activity: {
     screenTitle: 'Activity',
@@ -166,6 +194,7 @@ const en = {
     noResults: 'No endpoints found',
     noEndpoints: 'No share endpoints available',
     preview: 'Preview',
+    share: 'Share',
     endpointType: {
       social: 'Social',
       messaging: 'Messaging',
@@ -190,6 +219,44 @@ const en = {
     messageDelivered: '✓✓',
     messageRead: '✓✓',
     messageFailed: '✕',
+    attach: 'Attach file',
+    search: 'Search messages',
+    layout: 'Layout',
+  },
+  // Offline queue banner, indicator and cache-stats display (OfflineBanner,
+  // OfflineIndicator, OfflineQueueVisualizer, CacheIndicator,
+  // CacheableView — see mobile/src/offline/ and
+  // mobile/src/components/cache/). These keys were referenced throughout
+  // that code but never defined in any locale bundle (not even here in
+  // en), so every user in every locale saw raw keys like "offline.offline"
+  // instead of real text — see issue #1627.
+  offline: {
+    offline: 'Offline',
+    online: 'Online',
+    syncing: 'Syncing',
+    offlineDataAvailable: 'Showing cached data from last sync',
+    noCachedData: 'No cached data available while offline',
+    error: 'Error',
+    bannerAccessibilityLabel: 'Offline mode active',
+    bannerAccessibilityHint: 'Tap to view pending operations',
+    queueTitle: 'Offline Queue',
+    queueEmpty: 'No pending operations',
+    queueEmptySub: 'Operations will appear here when you go offline',
+    pendingOps: 'Pending',
+    deadOps: 'Failed',
+    queueOps: 'ops',
+    retries: 'Retries',
+    retry: 'Retry',
+    retryAll: 'Retry All',
+    clearDeadLetter: 'Clear Dead Letter',
+    noOperations: 'No operations in queue',
+    syncingOps: 'Syncing operations…',
+    queuedOps: 'Queued for sync',
+    hitRate: 'Hit rate',
+    cacheSize: 'Cache size',
+    staleness: 'Stale entries:',
+    staleNone: 'None',
+    lastUpdated: 'Last updated:',
   },
   settings: {
     screenTitle: 'Settings',
