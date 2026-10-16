@@ -4,6 +4,14 @@ import { NextRequest } from 'next/server';
 const { getServerSession } = vi.hoisted(() => ({ getServerSession: vi.fn() }));
 vi.mock('@/lib/auth/auth', () => ({ getServerSession }));
 
+const { findUniqueMock } = vi.hoisted(() => ({ findUniqueMock: vi.fn() }));
+vi.mock('@/lib/prisma', () => ({ prisma: { user: { findUnique: findUniqueMock } } }));
+
+const { getUnclaimedRewardsOnChain } = vi.hoisted(() => ({
+  getUnclaimedRewardsOnChain: vi.fn(),
+}));
+vi.mock('@/lib/stellar/referral-contract', () => ({ getUnclaimedRewardsOnChain }));
+
 import { GET, POST } from '@/app/api/referrals/route';
 import { generateReferralCode } from '@/lib/services/referral-service';
 
@@ -23,6 +31,8 @@ function post(body: unknown, ip = '203.0.113.20') {
 
 beforeEach(() => {
   getServerSession.mockReset();
+  findUniqueMock.mockReset().mockResolvedValue(null);
+  getUnclaimedRewardsOnChain.mockReset();
 });
 
 describe('GET /api/referrals', () => {
@@ -44,6 +54,48 @@ describe('GET /api/referrals', () => {
     const stats = await (await GET(get('stats'))).json();
     expect(stats).toHaveProperty('totalReferrals');
     expect((await GET(get('nope'))).status).toBe(400);
+  });
+
+  it('merges the unclaimed on-chain reward balance into stats when a wallet is linked', async () => {
+    signedInAs('referrer-onchain');
+    findUniqueMock.mockResolvedValue({ walletAddress: 'GREFERRERWALLETADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' });
+    getUnclaimedRewardsOnChain.mockResolvedValue(12345n);
+
+    const stats = await (await GET(get('stats'))).json();
+
+    expect(findUniqueMock).toHaveBeenCalledWith({
+      where: { id: 'referrer-onchain' },
+      select: { walletAddress: true },
+    });
+    expect(getUnclaimedRewardsOnChain).toHaveBeenCalledWith(
+      'GREFERRERWALLETADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+    );
+    // Matches contract state: the stats response reflects exactly what the
+    // (mocked) contract read returned, as a string (i128 can exceed
+    // Number's safe range).
+    expect(stats.onChainUnclaimedRewards).toBe('12345');
+  });
+
+  it('falls back to onChainUnclaimedRewards: null without a linked wallet', async () => {
+    signedInAs('referrer-no-wallet');
+    findUniqueMock.mockResolvedValue({ walletAddress: null });
+
+    const stats = await (await GET(get('stats'))).json();
+
+    expect(getUnclaimedRewardsOnChain).not.toHaveBeenCalled();
+    expect(stats.onChainUnclaimedRewards).toBeNull();
+  });
+
+  it('falls back to onChainUnclaimedRewards: null if the on-chain read fails', async () => {
+    signedInAs('referrer-chain-error');
+    findUniqueMock.mockResolvedValue({ walletAddress: 'GSOMEWALLETXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' });
+    getUnclaimedRewardsOnChain.mockRejectedValue(new Error('RPC unavailable'));
+
+    const res = await GET(get('stats'));
+    const stats = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(stats.onChainUnclaimedRewards).toBeNull();
   });
 });
 

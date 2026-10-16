@@ -1,11 +1,42 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RichTextEditor } from '@/components/ui/rich-text';
 import { hasRichTextContent } from '@/lib/rich-text/sanitize';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc-client';
-import { BOUNTY_TEMPLATES, TEMPLATE_CATEGORIES, type BountyTemplate } from '@/lib/bounty-templates';
+import { BOUNTY_TEMPLATES, type BountyTemplate } from '@/lib/bounty-templates';
+
+/**
+ * Loads templates from `GET /api/bounty-templates` — system templates plus
+ * any the signed-in user has saved themselves (Issue #1611) — falling back
+ * to the static `BOUNTY_TEMPLATES` list (signed out, offline, or the
+ * request fails) so the picker never shows an empty state.
+ */
+function useTemplates(): { templates: BountyTemplate[]; categories: string[] } {
+  const [templates, setTemplates] = useState<BountyTemplate[]>(BOUNTY_TEMPLATES);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/bounty-templates')
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
+      .then((data: { templates: BountyTemplate[] }) => {
+        if (!cancelled && Array.isArray(data.templates) && data.templates.length > 0) {
+          setTemplates(data.templates);
+        }
+      })
+      .catch(() => {
+        // Keep the static fallback already in state — e.g. signed out
+        // (401), offline, or a transient server error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const categories = [...new Set(templates.map((t) => t.category))];
+  return { templates, categories };
+}
 
 interface ProjectFormData {
   title: string;
@@ -27,10 +58,11 @@ type Step = 'template' | 'form';
 
 function TemplatePicker({ onSelect, onSkip }: { onSelect: (t: BountyTemplate) => void; onSkip: () => void }) {
   const [activeCategory, setActiveCategory] = useState<string>('All');
+  const { templates, categories } = useTemplates();
 
   const filtered = activeCategory === 'All'
-    ? BOUNTY_TEMPLATES
-    : BOUNTY_TEMPLATES.filter(t => t.category === activeCategory);
+    ? templates
+    : templates.filter(t => t.category === activeCategory);
 
   return (
     <div className="space-y-5" aria-label="Select a bounty template">
@@ -43,7 +75,7 @@ function TemplatePicker({ onSelect, onSkip }: { onSelect: (t: BountyTemplate) =>
 
       {/* Category filter */}
       <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by category">
-        {['All', ...TEMPLATE_CATEGORIES].map(cat => (
+        {['All', ...categories].map(cat => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}
@@ -96,7 +128,9 @@ function TemplatePicker({ onSelect, onSkip }: { onSelect: (t: BountyTemplate) =>
 
 /**
  * Two-step project/bounty creation form: an optional template picker
- * (pre-fills fields from `BOUNTY_TEMPLATES`) followed by the editable form
+ * (pre-fills fields from `GET /api/bounty-templates` — system templates
+ * plus the signed-in user's own saved ones, Issue #1611 — falling back to
+ * the static `BOUNTY_TEMPLATES` list) followed by the editable form
  * fields. On submit it calls the `projects.create` tRPC mutation, then the
  * `onSubmit` callback with the entered values, and resets the form.
  */

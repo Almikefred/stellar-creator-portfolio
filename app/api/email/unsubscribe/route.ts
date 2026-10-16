@@ -1,5 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { verifyUnsubscribeToken, type UnsubscribeCategory } from '@/lib/email/unsubscribe-token';
+
+const CATEGORY_LABELS: Record<UnsubscribeCategory, string> = {
+  bountyAlerts: 'new bounty alerts',
+  applicationUpdates: 'application updates',
+  messages: 'message notifications',
+  marketing: 'marketing emails',
+  all: 'all email notifications',
+};
+
+/** Builds the NotificationPreference `update`/`create` patch for one category. */
+function preferencePatch(category: UnsubscribeCategory): Record<string, boolean> {
+  if (category === 'all') {
+    return {
+      emailBountyAlerts: false,
+      emailApplicationUpdates: false,
+      emailMessages: false,
+      emailMarketing: false,
+    };
+  }
+  const field = `email${category[0].toUpperCase()}${category.slice(1)}`;
+  return { [field]: false };
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,10 +36,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: { emailUnsubscribeToken: token },
-    });
+    const payload = verifyUnsubscribeToken(token);
+    if (!payload) {
+      return NextResponse.json(
+        { error: 'Invalid or expired unsubscribe token' },
+        { status: 404 }
+      );
+    }
 
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
     if (!user) {
       return NextResponse.json(
         { error: 'Invalid or expired unsubscribe token' },
@@ -24,6 +52,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const label = CATEGORY_LABELS[payload.category];
     const html = `
       <!DOCTYPE html>
       <html>
@@ -41,7 +70,7 @@ export async function GET(request: NextRequest) {
         <body>
           <div class="container">
             <h1>Unsubscribe from Email Notifications</h1>
-            <p>Click the button below to confirm you want to unsubscribe from all email notifications.</p>
+            <p>Click the button below to confirm you want to unsubscribe from ${label}.</p>
             <form method="POST" action="/api/email/unsubscribe">
               <input type="hidden" name="token" value="${token}" />
               <button type="submit">Confirm Unsubscribe</button>
@@ -76,10 +105,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: { emailUnsubscribeToken: token },
-    });
+    const payload = verifyUnsubscribeToken(token);
+    if (!payload) {
+      return NextResponse.json(
+        { error: 'Invalid or expired unsubscribe token' },
+        { status: 404 }
+      );
+    }
 
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
     if (!user) {
       return NextResponse.json(
         { error: 'Invalid or expired unsubscribe token' },
@@ -87,18 +121,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const patch = preferencePatch(payload.category);
     await prisma.notificationPreference.upsert({
       where: { userId: user.id },
-      update: { emailBountyAlerts: false, emailApplicationUpdates: false, emailMessages: false, emailMarketing: false },
+      update: patch,
       create: {
         userId: user.id,
-        emailBountyAlerts: false,
-        emailApplicationUpdates: false,
-        emailMessages: false,
+        emailBountyAlerts: true,
+        emailApplicationUpdates: true,
+        emailMessages: true,
         emailMarketing: false,
+        ...patch,
       },
     });
 
+    const label = CATEGORY_LABELS[payload.category];
     const html = `
       <!DOCTYPE html>
       <html>
@@ -114,7 +151,7 @@ export async function POST(request: NextRequest) {
         <body>
           <div class="container">
             <h1>✓ Successfully Unsubscribed</h1>
-            <p>You have been unsubscribed from all email notifications.</p>
+            <p>You have been unsubscribed from ${label}.</p>
             <p>You can re-enable notifications anytime from your notification preferences.</p>
           </div>
         </body>

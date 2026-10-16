@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import { prisma } from '@/lib/prisma';
+import { getUnclaimedRewardsOnChain } from '@/lib/stellar/referral-contract';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -202,6 +204,48 @@ export function getReferralHistory(userId: string): ReferralRecord[] {
   return [...records.values()]
     .filter((r) => r.referrerId === userId)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export interface ReferralStatsWithChain extends ReferralStats {
+  /**
+   * Unclaimed on-chain reward balance from the `referral` Soroban contract
+   * (smallest unit of the configured reward token, as a decimal string —
+   * i128 can exceed Number's safe integer range). `null` when the user has
+   * no linked wallet, `REFERRAL_CONTRACT_ID` isn't configured, or the
+   * on-chain read failed — the off-chain fields above are always populated
+   * regardless, so a degraded on-chain read never breaks the stats
+   * endpoint (see Issue #1612).
+   */
+  onChainUnclaimedRewards: string | null;
+}
+
+/**
+ * `getReferralStats` plus the unclaimed reward balance read live from the
+ * `referral` contract for the user's linked wallet, if any. The two sources
+ * track different things and are both surfaced rather than reconciled:
+ * `pendingPayout`/`totalEarned` above come from this app's own referral
+ * ledger (which event happened, fraud checks, etc.); `onChainUnclaimedRewards`
+ * is what the contract will actually pay out on `claim_referral_reward`.
+ */
+export async function getReferralStatsWithChain(userId: string): Promise<ReferralStatsWithChain> {
+  const stats = getReferralStats(userId);
+
+  let onChainUnclaimedRewards: string | null = null;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true },
+    });
+    if (user?.walletAddress) {
+      const rewards = await getUnclaimedRewardsOnChain(user.walletAddress);
+      if (rewards !== null) onChainUnclaimedRewards = rewards.toString();
+    }
+  } catch {
+    // Best-effort enrichment: a DB or RPC hiccup here still returns valid
+    // off-chain stats rather than failing the whole request.
+  }
+
+  return { ...stats, onChainUnclaimedRewards };
 }
 
 export { REWARDS };

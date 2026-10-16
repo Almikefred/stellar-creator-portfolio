@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from '@/lib/auth/auth';
 import { prisma } from '@/lib/prisma';
 import { type Prisma, type Role } from '@prisma/client';
+import { onProfileChanged } from '@/server/services/search';
 
 export async function GET() {
   const session = await getServerSession();
@@ -84,9 +85,15 @@ export async function POST(req: NextRequest) {
 
   const userId = session.user.id;
 
+  // Populated only when role === 'CREATOR', then used to refresh the
+  // creator's search embedding once the transaction below has committed
+  // (see Issue #1619 — stale embeddings otherwise keep semantic search
+  // returning results against a creator's pre-onboarding profile text).
+  let updatedCreatorProfile: Prisma.CreatorProfileGetPayload<object> | null = null;
+
   await prisma.$transaction(async (tx) => {
     if (role === 'CREATOR') {
-      await tx.creatorProfile.upsert({
+      updatedCreatorProfile = await tx.creatorProfile.upsert({
         where: { userId },
         create: {
           userId,
@@ -130,6 +137,27 @@ export async function POST(req: NextRequest) {
       },
     });
   });
+
+  // Fire-and-forget, after the transaction has committed — re-indexing
+  // (and the OpenAI/HuggingFace embedding call it makes) must never be
+  // able to roll back the profile write, and must never add its latency
+  // to this response.
+  if (updatedCreatorProfile) {
+    const p = updatedCreatorProfile;
+    onProfileChanged({
+      id: p.id,
+      displayName: p.displayName,
+      bio: p.bio,
+      discipline: p.discipline,
+      skills: p.skills,
+      updatedAt: p.updatedAt.toISOString(),
+      githubUrl: p.githubUrl,
+      linkedinUrl: p.linkedinUrl,
+      verified: p.verified,
+      rating: p.rating,
+      completedProjects: p.completedProjects,
+    });
+  }
 
   return NextResponse.json({ completed: true });
 }
