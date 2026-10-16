@@ -317,6 +317,7 @@ The app uses `output: 'standalone'` (Next.js) and can be deployed to:
 3. Soroban contracts require `overflow-checks = true` in `[profile.release]`
 4. Looking for open work? [`docs/IMPLEMENTATION_NOTES.md`](./docs/IMPLEMENTATION_NOTES.md) tracks partially-scoped backlog items (e.g. STT integration, escrow slippage protection, OCR KYC) with implementation specs already written out
 5. Deploying or upgrading a Soroban contract? See [`docs/contracts.md`](./docs/contracts.md) for how CI deploys to Testnet/Mainnet, where the resulting contract addresses go, and how to upgrade a live contract safely
+6. Restoring the database or running the quarterly restore drill? Follow [`docs/POSTGRES_RESTORE_RUNBOOK.md`](./docs/POSTGRES_RESTORE_RUNBOOK.md)
 
 ## License
 
