@@ -1,3 +1,4 @@
+# Used only when autoscaling.enabled is false; otherwise the HPA owns replicas.
 replicaCount: 2
 
 image:
@@ -22,6 +23,22 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
+  # Optional second metric; set to null to scale on CPU only.
+  targetMemoryUtilizationPercentage: 80
+  # Scale up fast on traffic spikes, scale down slowly to avoid flapping.
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
 
 config:
   NODE_ENV: "production"
@@ -44,5 +61,10 @@ readinessProbe:
   initialDelaySeconds: 5
   periodSeconds: 10
 
+# Keeps pods up during node drains and cluster upgrades. maxUnavailable, when
+# set, takes precedence over minAvailable. Disable for single-replica installs,
+# where minAvailable: 1 would block every drain.
 pdb:
+  enabled: true
   minAvailable: 1
+  # maxUnavailable: 1
