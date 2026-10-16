@@ -3,6 +3,21 @@ name: OTA Release
 # #603 — Build, diff, encrypt, and publish an OTA patch on every merge to main.
 # Consumers pull the manifest from OTA_MANIFEST_URL and apply the patch
 # on-device without going through App Store review.
+#
+# #1626 — staging and production are separate OTA channels so a staging
+# build can never reach production devices:
+#   - `push` to `main`      -> the `staging` channel, fully automatic (same
+#     as before #1626, just namespaced).
+#   - a GitHub `release` being `published` -> the `production` channel,
+#     gated on the `production` GitHub Environment's required reviewers —
+#     mirroring how `deploy-mainnet.yml` requires a deliberate release
+#     before anything reaches Mainnet. A merge to `main` alone never
+#     promotes to production.
+# Each channel writes to its own S3 prefix (`bundles/<channel>/`,
+# `patches/<channel>/`, `manifest-<channel>.json`) and diffs only against
+# its own previous bundle, so a staging release can't be built as a patch
+# on top of production's bundle (or vice versa) and clients pinned to one
+# channel's manifest URL never see the other channel's updates.
 
 on:
   push:
@@ -10,9 +25,14 @@ on:
     paths:
       - 'mobile/**'
       - '.github/workflows/ota-release.yml'
+  release:
+    types: [published]
 
 concurrency:
-  group: ota-release
+  # Separate concurrency groups per channel: a staging push and a
+  # production release are unrelated and must not block or cancel each
+  # other.
+  group: ota-release-${{ github.event_name == 'release' && 'production' || 'staging' }}
   cancel-in-progress: false   # never cancel a release mid-flight
 
 jobs:
@@ -20,11 +40,20 @@ jobs:
     name: Build → Diff → Encrypt → Publish
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The production channel requires approval from the `production`
+    # GitHub Environment's reviewers (configure them in repo Settings ->
+    # Environments); the staging channel has no gate, matching the
+    # automatic-on-main-push behaviour this workflow always had.
+    environment: ${{ github.event_name == 'release' && 'production' || 'staging' }}
 
     env:
       OTA_BUCKET: ${{ secrets.OTA_S3_BUCKET }}
       OTA_AES_KEY: ${{ secrets.OTA_AES_KEY }}   # 64-char hex (32 bytes)
       AWS_REGION: ${{ secrets.AWS_REGION }}
+      # `staging` on every push to main, `production` only when promoted via
+      # a published release. All S3 paths below are namespaced by this so
+      # the two channels never share a bundle, patch or manifest.
+      OTA_CHANNEL: ${{ github.event_name == 'release' && 'production' || 'staging' }}
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -62,7 +91,7 @@ jobs:
       - name: Download previous bundle
         id: prev
         run: |
-          aws s3 cp "s3://${OTA_BUCKET}/bundles/current.bundle" prev.bundle || echo "no-prev=true" >> "$GITHUB_OUTPUT"
+          aws s3 cp "s3://${OTA_BUCKET}/bundles/${OTA_CHANNEL}/current.bundle" prev.bundle || echo "no-prev=true" >> "$GITHUB_OUTPUT"
 
       # ── Generate bsdiff patch ────────────────────────────────────────────────
       - name: Install bsdiff
@@ -114,7 +143,7 @@ jobs:
       - name: Upload encrypted patch
         run: |
           aws s3 cp patch.enc \
-            "s3://${OTA_BUCKET}/patches/${{ steps.encrypt.outputs.version }}.enc" \
+            "s3://${OTA_BUCKET}/patches/${OTA_CHANNEL}/${{ steps.encrypt.outputs.version }}.enc" \
             --content-type application/octet-stream
 
       # ── Sign manifest with Ed25519 ───────────────────────────────────────────
@@ -164,10 +193,11 @@ jobs:
             // Sign the canonical manifest payload (all fields except
             // 'signature' itself, sorted by key for determinism).
             const payload = {
+              channel:        '${{ env.OTA_CHANNEL }}',
               iv:             '${{ steps.encrypt.outputs.iv }}',
               minBaseVersion: '1.0.0',
               patchSize:      ${{ steps.encrypt.outputs.patch_size }},
-              patchUrl:       'https://${OTA_BUCKET}.s3.${AWS_REGION}.amazonaws.com/patches/${{ steps.encrypt.outputs.version }}.enc',
+              patchUrl:       'https://${OTA_BUCKET}.s3.${AWS_REGION}.amazonaws.com/patches/${{ env.OTA_CHANNEL }}/${{ steps.encrypt.outputs.version }}.enc',
               sha256:         '${{ steps.encrypt.outputs.sha256 }}',
               tag:            '${{ steps.encrypt.outputs.tag }}',
               version:        '${{ steps.encrypt.outputs.version }}',
@@ -182,8 +212,9 @@ jobs:
         run: |
           cat > manifest.json <<EOF
           {
+            "channel": "${OTA_CHANNEL}",
             "version": "${{ steps.encrypt.outputs.version }}",
-            "patchUrl": "https://${OTA_BUCKET}.s3.${AWS_REGION}.amazonaws.com/patches/${{ steps.encrypt.outputs.version }}.enc",
+            "patchUrl": "https://${OTA_BUCKET}.s3.${AWS_REGION}.amazonaws.com/patches/${OTA_CHANNEL}/${{ steps.encrypt.outputs.version }}.enc",
             "sha256": "${{ steps.encrypt.outputs.sha256 }}",
             "iv": "${{ steps.encrypt.outputs.iv }}",
             "tag": "${{ steps.encrypt.outputs.tag }}",
@@ -193,19 +224,22 @@ jobs:
           }
           EOF
           aws s3 cp manifest.json \
-            "s3://${OTA_BUCKET}/manifest.json" \
+            "s3://${OTA_BUCKET}/manifest-${OTA_CHANNEL}.json" \
             --content-type application/json \
             --cache-control "no-cache, no-store"
 
       # ── Promote current bundle for next diff ─────────────────────────────────
+      # Namespaced per channel: staging's "current" bundle must never become
+      # the diff base for a production patch, and vice versa.
       - name: Promote bundle to current
         run: |
           aws s3 cp "$BUNDLE_PATH" \
-            "s3://${OTA_BUCKET}/bundles/current.bundle"
+            "s3://${OTA_BUCKET}/bundles/${OTA_CHANNEL}/current.bundle"
 
       - name: Summary
         run: |
-          echo "### OTA Release ${{ steps.encrypt.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### OTA Release — \`${OTA_CHANNEL}\` channel — ${{ steps.encrypt.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Channel: \`${OTA_CHANNEL}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Patch size: ${{ steps.encrypt.outputs.patch_size }} bytes" >> "$GITHUB_STEP_SUMMARY"
           echo "- SHA-256: \`${{ steps.encrypt.outputs.sha256 }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Ed25519 signature: \`${{ steps.sign.outputs.signature }}\`" >> "$GITHUB_STEP_SUMMARY"

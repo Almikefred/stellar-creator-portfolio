@@ -36,5 +36,9 @@ export const DEEP_LINK_CONFIG: LinkingOptions<RootStackParamList>["config"] = {
     ImagePicker: "upload",
     StreamHost: "stream/:roomId/host",
     StreamViewer: "stream/:roomId",
+    BountyDetail: "bounty/:bountyId",
+    EmailVerification: "verify",
+    PaymentComplete: "payment/complete",
+    NotificationSettings: "settings/notifications",
   } as any, // cast needed until extended param list is added
 };
