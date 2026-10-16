@@ -61,6 +61,10 @@ const CREATOR_SELECT = {
   skills: true,
   rating: true,
   completedProjects: true,
+  acceptingWork: true,
+  hourlyRate: true,
+  projectRateMin: true,
+  projectRateMax: true,
 } as const;
 
 function toCreatorFeatures(p: {
@@ -72,6 +76,10 @@ function toCreatorFeatures(p: {
   skills: string[];
   rating: number;
   completedProjects: number;
+  acceptingWork: boolean;
+  hourlyRate: number | null;
+  projectRateMin: number | null;
+  projectRateMax: number | null;
 }): CreatorFeatures {
   return {
     profileId: p.id,
@@ -82,6 +90,10 @@ function toCreatorFeatures(p: {
     skills: p.skills,
     rating: p.rating,
     completedProjects: p.completedProjects,
+    acceptingWork: p.acceptingWork,
+    hourlyRate: p.hourlyRate,
+    projectRateMin: p.projectRateMin,
+    projectRateMax: p.projectRateMax,
   };
 }
 

@@ -31,6 +31,18 @@ export interface CreatorFeatures {
   lastBountyCompletedAt?: string | null
   /** Response rate 0–1 — used for activity boost */
   responseRate?: number | null
+  /**
+   * Open to new bounty applications right now (issue #1609). Treated as
+   * available when omitted, so existing callers/tests that don't set this
+   * keep their previous behavior. `rankCreatorsForBounty` filters out
+   * creators with this explicitly `false` before scoring — unavailable
+   * creators never appear in results, however well they'd otherwise score.
+   */
+  acceptingWork?: boolean
+  /** Rate card, if the creator has set one — see `budgetFit` below. */
+  hourlyRate?: number | null
+  projectRateMin?: number | null
+  projectRateMax?: number | null
 }
 
 export interface MatchScoreBreakdown {
@@ -169,8 +181,35 @@ function reputation(creator: CreatorFeatures): number {
 }
 
 /** Heuristic: higher completion count → comfortable with larger briefs */
+/**
+ * A bounty with no stated duration could be anywhere from a day to a few
+ * weeks of work — used only to translate an hourly rate into a rough
+ * project-equivalent range when a creator has set an hourly rate but no
+ * project range (the common case: most creators price one or the other).
+ */
+const HOURLY_TO_PROJECT_HOURS = { min: 8, max: 160 }
+
 function budgetFit(bounty: BountyFeatures, creator: CreatorFeatures): number {
   const b = bounty.budget
+
+  // Prefer the creator's own declared rate card (issue #1609) over the
+  // completedProjects-based proxy below, when they've set one.
+  const hasProjectRange = creator.projectRateMin != null || creator.projectRateMax != null
+  const hasHourlyRate = creator.hourlyRate != null
+  if (hasProjectRange || hasHourlyRate) {
+    const min = hasProjectRange
+      ? creator.projectRateMin ?? creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.min
+      : creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.min
+    const max = hasProjectRange
+      ? creator.projectRateMax ?? creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.max
+      : creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.max
+    if (b >= min && b <= max) return 1
+    const dist = b < min ? (min - b) / Math.max(min, 1) : (b - max) / Math.max(max, 1)
+    return Math.max(0, 1 - Math.min(1, dist))
+  }
+
+  // Fallback for creators who haven't set a rate card yet: infer a
+  // plausible budget range from their track record.
   const tier = Math.min(1, creator.completedProjects / 20)
   const softMin = 300 + tier * 1500
   const softMax = 5000 + tier * 25000
@@ -295,7 +334,11 @@ export function rankCreatorsForBounty(
   strategy: MatchingStrategy,
   limit = 20,
 ): Array<{ creator: CreatorFeatures; breakdown: MatchScoreBreakdown }> {
+  // Matching respects availability (issue #1609): a creator who has marked
+  // themselves as not accepting work is excluded outright, not just scored
+  // lower. `undefined` (not set at all) is treated as available.
   const ranked = creators
+    .filter((creator) => creator.acceptingWork !== false)
     .map((creator) => ({
       creator,
       breakdown: scoreCreatorBountyPair(bounty, creator, strategy),
