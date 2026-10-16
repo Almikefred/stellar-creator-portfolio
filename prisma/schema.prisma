@@ -422,6 +422,27 @@ enum ReviewStatus {
   REJECTED
 }
 
+// Mobile Expo push token registered by a signed-in user, so server-side
+// push can target them. Registered after sign-in and re-registered on
+// token refresh (see mobile/src/services/PushNotificationService.ts
+// registerPushTokenWithBackend). One row per (userId, token): the same
+// physical device can get a new Expo token across reinstalls, and the
+// same token should not be duplicated for a user across repeated
+// registration calls (app foreground, retry, etc.).
+model PushDeviceToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String
+  platform   String // 'ios' | 'android' | 'web'
+  lastUsedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
+}
+
 model Notification {
   id          String             @id @default(cuid())
   messageId   String?            @unique
@@ -465,7 +486,21 @@ model NotificationPreference {
   emailMessages           Boolean  @default(true)
   emailMarketing          Boolean  @default(false)
   inAppEnabled            Boolean  @default(true)
+  /// Digest emails roll up unread in-app notifications instead of sending
+  /// one email per event. DAILY by default so new users get the lower-noise
+  /// behavior; NONE turns digests off entirely.
+  digestFrequency         DigestFrequency @default(DAILY)
+  /// Set after a digest email is queued for this user so the next run only
+  /// picks up notifications that arrived since, instead of re-sending the
+  /// same still-unread ones forever.
+  lastDigestSentAt        DateTime?
   updatedAt               DateTime @updatedAt
+}
+
+enum DigestFrequency {
+  NONE
+  DAILY
+  WEEKLY
 }
 
 model InAppNotification {

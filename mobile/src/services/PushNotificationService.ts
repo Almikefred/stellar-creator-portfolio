@@ -18,6 +18,8 @@ import * as PushNotificationIOS from '@react-native-push-notification-ios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { notificationAggregator, RawNotification } from './NotificationAggregator';
+import { API_BASE_URL } from './ApiClient';
+import { useAuthStore } from '../store/authStore';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -159,6 +161,7 @@ export class PushNotificationService {
 
   private listeners: Array<() => void> = [];
   private cleanupListeners: (() => void) | null = null;
+  private cleanupPushTokenListener: (() => void) | null = null;
 
   // ─── Initialization ───────────────────────────────────────────────────────
 
@@ -179,6 +182,25 @@ export class PushNotificationService {
 
     // Get FCM token
     this.state.fcmToken = await this.getFCMToken();
+
+    // Register with the backend so server-side push has somewhere to send
+    // to. Only meaningful once signed in — a token registered against no
+    // user can't be targeted by anything.
+    if (this.state.fcmToken) {
+      await this.registerPushTokenWithBackend(this.state.fcmToken);
+    }
+
+    // Expo rotates the push token on reinstall/restore/credential changes;
+    // re-register whenever that happens so the backend never holds a
+    // stale token for this device.
+    const subscription = Notifications.addPushTokenListener((devicePushToken) => {
+      const token = devicePushToken.data;
+      this.state.fcmToken = token;
+      this.registerPushTokenWithBackend(token).catch((error) => {
+        console.error('[PushNotification] Failed to register refreshed token:', error);
+      });
+    });
+    this.cleanupPushTokenListener = () => subscription.remove();
 
     // Setup listeners
     this.cleanupListeners = setupNotificationListeners(
@@ -201,6 +223,10 @@ export class PushNotificationService {
     if (this.cleanupListeners) {
       this.cleanupListeners();
       this.cleanupListeners = null;
+    }
+    if (this.cleanupPushTokenListener) {
+      this.cleanupPushTokenListener();
+      this.cleanupPushTokenListener = null;
     }
     this.listeners = [];
     this.state.isInitialized = false;
@@ -284,6 +310,53 @@ export class PushNotificationService {
     }
 
     return null;
+  }
+
+  /**
+   * POST the current push token to the backend (`/api/push/register`) so
+   * server-side push can target this device. Called once after a token is
+   * obtained in `initialize()` (post sign-in) and again whenever
+   * `expo-notifications` reports the token changed.
+   *
+   * No-op when the user isn't signed in yet — the endpoint requires a
+   * session and associates the token with that user, so there's nothing
+   * useful to register against an anonymous session. Failures are logged
+   * and swallowed: a push-registration hiccup shouldn't block app startup
+   * or notification handling.
+   */
+  async registerPushTokenWithBackend(token: string): Promise<boolean> {
+    const authToken = useAuthStore.getState().token;
+    if (!authToken) {
+      console.log('[PushNotification] Skipping token registration: not signed in');
+      return false;
+    }
+
+    const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/push/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ token, platform }),
+      });
+
+      if (!response.ok) {
+        console.error(
+          '[PushNotification] Token registration failed:',
+          response.status,
+          await response.text().catch(() => ''),
+        );
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('[PushNotification] Token registration request failed:', error);
+      return false;
+    }
   }
 
   // ─── Notification Sending ─────────────────────────────────────────────────

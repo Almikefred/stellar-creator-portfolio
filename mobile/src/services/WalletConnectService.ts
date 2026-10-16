@@ -15,6 +15,7 @@
 
 import { Linking } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,12 @@ const APP_SCHEME = "tamgora"; // must match app.json scheme
 const CALLBACK_PATH = "wc"; // tamgora://wc?topic=…&key=…
 
 const STORAGE_KEY_SESSION = "@stellar/wc_session";
+// The backend JWT is a sensitive auth credential — it goes through
+// expo-secure-store (Keychain/Keystore-backed), not AsyncStorage, which is
+// unencrypted and readable on rooted/jailbroken devices and from backups
+// (see issue: "Mobile: secure token storage with SecureStore"). The pairing
+// session (topic/public key/expiry) is not a secret, so it stays in
+// AsyncStorage for fast, synchronous-feeling access.
 const STORAGE_KEY_TOKEN = "@stellar/auth_token";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -179,7 +186,10 @@ export async function loadSession(): Promise<WCSession | null> {
 }
 
 export async function clearSession(): Promise<void> {
-  await AsyncStorage.multiRemove([STORAGE_KEY_SESSION, STORAGE_KEY_TOKEN]);
+  await Promise.all([
+    AsyncStorage.removeItem(STORAGE_KEY_SESSION),
+    SecureStore.deleteItemAsync(STORAGE_KEY_TOKEN),
+  ]);
 }
 
 // ─── Backend auth exchange ────────────────────────────────────────────────────
@@ -213,17 +223,17 @@ export async function exchangeForToken(
     token: data.token,
     expiresAt: data.expiresAt ?? Date.now() / 1000 + 3600,
   };
-  await AsyncStorage.setItem(STORAGE_KEY_TOKEN, JSON.stringify(authToken));
+  await SecureStore.setItemAsync(STORAGE_KEY_TOKEN, JSON.stringify(authToken));
   return authToken;
 }
 
 export async function loadToken(): Promise<AuthToken | null> {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY_TOKEN);
+    const raw = await SecureStore.getItemAsync(STORAGE_KEY_TOKEN);
     if (!raw) return null;
     const token: AuthToken = JSON.parse(raw);
     if (token.expiresAt < Date.now() / 1000) {
-      await AsyncStorage.removeItem(STORAGE_KEY_TOKEN);
+      await SecureStore.deleteItemAsync(STORAGE_KEY_TOKEN);
       return null;
     }
     return token;

@@ -1,3 +1,4 @@
+import * as SecureStore from "expo-secure-store";
 import { authenticateBiometric } from "./BiometricAuthService";
 
 export interface StellarAccount {
@@ -74,13 +75,23 @@ async function importAsyncStorage() {
   }
 }
 
+// Key material (`encryptedSecret`) is a Stellar secret seed and must never
+// land in AsyncStorage: despite the name, nothing in this file actually
+// encrypts it (see `switchAccount`, which assigns the stored value straight
+// to `decryptedActiveSecret`), so it is the plaintext seed. AsyncStorage is
+// unencrypted on disk and readable on rooted/jailbroken devices and from
+// backups; expo-secure-store is Keychain/Keystore-backed. Non-sensitive
+// account metadata (public keys, labels) still goes through
+// `importAsyncStorage()` above — only the secret itself moved.
+function keystoreKey(publicKey: string): string {
+  return `keystore_${publicKey}`;
+}
+
 async function loadEncryptedKey(
   publicKey: string,
 ): Promise<string | null> {
   try {
-    const AsyncStorage = await importAsyncStorage();
-    if (!AsyncStorage) return null;
-    const raw = await AsyncStorage.getItem(`keystore_${publicKey}`);
+    const raw = await SecureStore.getItemAsync(keystoreKey(publicKey));
     if (!raw) return null;
     const entry: EncryptedKeyEntry = JSON.parse(raw);
     return entry.encryptedSecret;
@@ -94,11 +105,9 @@ async function storeEncryptedKey(
   encryptedSecret: string,
 ): Promise<void> {
   try {
-    const AsyncStorage = await importAsyncStorage();
-    if (!AsyncStorage) return;
     const entry: EncryptedKeyEntry = { publicKey, encryptedSecret };
-    await AsyncStorage.setItem(
-      `keystore_${publicKey}`,
+    await SecureStore.setItemAsync(
+      keystoreKey(publicKey),
       JSON.stringify(entry),
     );
   } catch {
@@ -108,9 +117,7 @@ async function storeEncryptedKey(
 
 async function removeEncryptedKey(publicKey: string): Promise<void> {
   try {
-    const AsyncStorage = await importAsyncStorage();
-    if (!AsyncStorage) return;
-    await AsyncStorage.removeItem(`keystore_${publicKey}`);
+    await SecureStore.deleteItemAsync(keystoreKey(publicKey));
   } catch {
     // Storage unavailable
   }

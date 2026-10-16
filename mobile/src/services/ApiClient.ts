@@ -13,7 +13,7 @@ import { Platform } from 'react-native';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const API_BASE_URL = __DEV__ 
+export const API_BASE_URL = __DEV__
   ? Platform.OS === 'ios' ? 'http://localhost:3001' : 'http://10.0.2.2:3001'
   : 'https://api.tamgora.app';
 
