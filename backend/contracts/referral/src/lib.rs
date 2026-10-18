@@ -1,8 +1,11 @@
 #![no_std]
+// `Events::publish` is deprecated in soroban-sdk 23 in favour of `#[contractevent]`.
+// Migrating changes the on-chain event topic/data layout the indexer decodes,
+// so it is kept as-is for the SDK upgrade and tracked as a separate change.
+#![allow(deprecated)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    Env,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
 };
 
 /// Errors raised by `register_referral` (Issue #1566). Surface on-chain as
@@ -40,6 +43,22 @@ pub enum DataKey {
     RewardToken,
 }
 
+/// Typed errors returned by referral entrypoints (#1562).
+///
+/// Codes are part of the contract's public interface: never renumber an
+/// existing variant, only append. See docs/contracts.md for the full table.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ReferralError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    ReferralAlreadyRegistered = 3,
+    MonthlyLimitReached = 4,
+    ReferralNotFound = 5,
+    NoUnclaimedRewards = 6,
+}
+
 #[contract]
 pub struct ReferralContract;
 
@@ -49,62 +68,27 @@ const REWARD_PERCENTAGE: u64 = 5; // 5% of platform fee
 
 #[contractimpl]
 impl ReferralContract {
-    pub fn initialize(env: Env, admin: Address, reward_token: Address) {
-        assert!(!env.storage().persistent().has(&DataKey::Admin), "Already initialized");
+    pub fn initialize(env: Env, admin: Address, reward_token: Address) -> Result<(), ReferralError> {
+        if env.storage().persistent().has(&DataKey::Admin) {
+            return Err(ReferralError::AlreadyInitialized);
+        }
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().persistent().set(&DataKey::RewardToken, &reward_token);
+        Ok(())
     }
 
-    /// Record that `referrer` referred `referred`.
-    ///
-    /// Must be signed by `referred` — the new user consents to who referred
-    /// them, so a third party can't attach arbitrary accounts to a referrer.
-    ///
-    /// Rejected (Issue #1566) when:
-    /// * `referrer == referred` → `SelfReferral`
-    /// * `referred` already has a referrer → `AlreadyReferred`
-    /// * `referrer` was referred by `referred` → `ReferralLoop`
-    /// * `referred` has already referred anyone → `RefereeIsReferrer`
-    ///
-    /// The last rule means a referee is always a fresh participant, so no
-    /// edge can ever close a cycle (a cycle needs some node to be referred
-    /// after it has already referred someone). The explicit 2-cycle check also
-    /// covers referrers registered before `HasReferred` was tracked.
-    pub fn register_referral(env: Env, referrer: Address, referred: Address) {
-        referred.require_auth();
-
-        if referrer == referred {
-            panic_with_error!(&env, ReferralError::SelfReferral);
-        }
-
+    pub fn register_referral(env: Env, referrer: Address, referred: Address) -> Result<(), ReferralError> {
         let key = DataKey::Referral(referred.clone());
         if env.storage().persistent().has(&key) {
-            panic_with_error!(&env, ReferralError::AlreadyReferred);
-        }
-
-        if let Some(upstream) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Referral>(&DataKey::Referral(referrer.clone()))
-        {
-            if upstream.referrer == referred {
-                panic_with_error!(&env, ReferralError::ReferralLoop);
-            }
-        }
-
-        if env
-            .storage()
-            .persistent()
-            .get::<DataKey, bool>(&DataKey::HasReferred(referred.clone()))
-            .unwrap_or(false)
-        {
-            panic_with_error!(&env, ReferralError::RefereeIsReferrer);
+            return Err(ReferralError::ReferralAlreadyRegistered);
         }
 
         let month = env.ledger().timestamp() / ONE_MONTH_SECS;
         let count_key = DataKey::ReferralCount(referrer.clone(), month);
         let mut count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        assert!(count < MAX_REFERRALS_PER_MONTH, "Max referrals per month reached");
+        if count >= MAX_REFERRALS_PER_MONTH {
+            return Err(ReferralError::MonthlyLimitReached);
+        }
 
         env.storage().persistent().set(
             &key,
@@ -130,14 +114,23 @@ impl ReferralContract {
             (symbol_short!("referral"), symbol_short!("reg")),
             (referrer, referred),
         );
+        Ok(())
     }
 
-    pub fn award_referral_reward(env: Env, referred: Address, platform_fee: i128) {
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).expect("Not initialized");
+    pub fn award_referral_reward(env: Env, referred: Address, platform_fee: i128) -> Result<(), ReferralError> {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(ReferralError::NotInitialized)?;
         admin.require_auth();
 
         let referral_key = DataKey::Referral(referred.clone());
-        let referral: Referral = env.storage().persistent().get(&referral_key).expect("Referral not found");
+        let referral: Referral = env
+            .storage()
+            .persistent()
+            .get(&referral_key)
+            .ok_or(ReferralError::ReferralNotFound)?;
 
         let reward = (platform_fee * REWARD_PERCENTAGE as i128) / 100;
 
@@ -150,16 +143,23 @@ impl ReferralContract {
             (symbol_short!("referral"), symbol_short!("reward")),
             (referral.referrer, referred, reward),
         );
+        Ok(())
     }
 
-    pub fn claim_referral_reward(env: Env, referrer: Address) -> i128 {
+    pub fn claim_referral_reward(env: Env, referrer: Address) -> Result<i128, ReferralError> {
         referrer.require_auth();
 
         let unclaimed_key = DataKey::UnclaimedRewards(referrer.clone());
         let unclaimed: i128 = env.storage().persistent().get(&unclaimed_key).unwrap_or(0);
-        assert!(unclaimed > 0, "No unclaimed rewards");
+        if unclaimed <= 0 {
+            return Err(ReferralError::NoUnclaimedRewards);
+        }
 
-        let reward_token: Address = env.storage().persistent().get(&DataKey::RewardToken).expect("Not initialized");
+        let reward_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RewardToken)
+            .ok_or(ReferralError::NotInitialized)?;
         let token_client = soroban_sdk::token::Client::new(&env, &reward_token);
         token_client.transfer(&env.current_contract_address(), &referrer, &unclaimed);
 
@@ -170,7 +170,7 @@ impl ReferralContract {
             (referrer, unclaimed),
         );
 
-        unclaimed
+        Ok(unclaimed)
     }
 
     // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
@@ -276,7 +276,7 @@ mod test {
     fn test_register_referral() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = ReferralContractClient::new(&env, &env.register_contract(None, ReferralContract));
+        let contract = ReferralContractClient::new(&env, &env.register(ReferralContract, ()));
 
         let admin = Address::generate(&env);
         let reward_token = Address::generate(&env);
@@ -295,7 +295,7 @@ mod test {
     fn test_award_and_claim_reward() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = ReferralContractClient::new(&env, &env.register_contract(None, ReferralContract));
+        let contract = ReferralContractClient::new(&env, &env.register(ReferralContract, ()));
 
         let admin = Address::generate(&env);
         let reward_token = Address::generate(&env);

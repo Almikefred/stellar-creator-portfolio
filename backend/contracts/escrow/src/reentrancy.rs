@@ -1,5 +1,3 @@
-#![no_std]
-
 //! Cross-contract reentrancy protection framework (#635).
 //!
 //! Soroban contracts are vulnerable to reentrancy when they make cross-contract
@@ -120,15 +118,16 @@ impl Drop for ReentrancyGuard<'_> {
 // CEI enforcement helpers
 // ---------------------------------------------------------------------------
 
-/// Assert that a status transition is valid before any state write.
+/// Check that a status transition is valid before any state write.
 /// Centralises the "Checks" phase so it cannot be accidentally skipped.
+/// Returns `err` instead of panicking so callers surface a typed error code.
 #[inline(always)]
-pub fn require_active_escrow(status_is_active: bool) {
-    assert!(status_is_active, "Escrow is not active");
+pub fn require_active_escrow<E>(status_is_active: bool, err: E) -> Result<(), E> {
+    if status_is_active { Ok(()) } else { Err(err) }
 }
 
-/// Assert that the caller is authorised to act on an escrow.
+/// Check that the caller is authorised to act on an escrow.
 #[inline(always)]
-pub fn require_authorized_party(caller_is_party: bool) {
-    assert!(caller_is_party, "Caller is not an authorized party");
+pub fn require_authorized_party<E>(caller_is_party: bool, err: E) -> Result<(), E> {
+    if caller_is_party { Ok(()) } else { Err(err) }
 }

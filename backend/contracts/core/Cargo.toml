@@ -14,7 +14,6 @@ stellar-upgradeable = { path = "../upgradeable" }
 soroban-sdk.workspace = true
 
 [dev-dependencies]
-soroban-sdk = { version = "23.5.2", features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-

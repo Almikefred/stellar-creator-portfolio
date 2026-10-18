@@ -1,0 +1,16 @@
+[package]
+name = "contract-benchmarks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+serde_json.workspace = true
+stellar-bounty-contract = { path = "../bounty" }
+stellar-escrow-contract = { path = "../escrow" }
+stellar-freelancer-contract = { path = "../freelancer" }
+stellar-governance-contract = { path = "../governance" }

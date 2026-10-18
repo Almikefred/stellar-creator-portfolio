@@ -441,25 +441,48 @@ CREATE TABLE escrow_accounts (
 
 ## Contract Deployment
 
+Contracts target `wasm32v1-none`. soroban-sdk 23 refuses `wasm32-unknown-unknown`
+on Rust 1.82 and newer. Install it with `rustup target add wasm32v1-none`.
+
+Testnet and mainnet deploys normally run from CI and record addresses in
+`deployments/<network>.json`; see [docs/deployments.md](../docs/deployments.md).
+
 ### Testnet Deployment
 ```bash
 # Build contract
-cargo build --manifest-path contracts/bounty/Cargo.toml --target wasm32-unknown-unknown --release
+cargo build -p stellar-bounty-contract --target wasm32v1-none --release
 
 # Deploy to Stellar Testnet
 stellar contract deploy \
   --network testnet \
   --source account-name \
-  contracts/bounty/target/wasm32-unknown-unknown/release/bounty.wasm
+  --wasm target/wasm32v1-none/release/stellar_bounty_contract.wasm
 ```
 
 ### Mainnet Deployment
 ```bash
 stellar contract deploy \
-  --network public \
+  --network mainnet \
   --source account-name \
-  contracts/bounty/target/wasm32-unknown-unknown/release/bounty.wasm
+  --wasm target/wasm32v1-none/release/stellar_bounty_contract.wasm
 ```
+
+## Resource Benchmarks
+
+`contracts/benchmarks` measures CPU instructions and memory bytes for the main
+entrypoints of the bounty, escrow, freelancer and governance contracts. It
+compares them with [`contracts/benchmarks.json`](contracts/benchmarks.json).
+CI runs it in the `contracts` job. Any entrypoint more than `threshold_pct`
+(10%) above its baseline gets a `::warning::` annotation, and the costs table
+goes to the job summary. The job stays green unless `BENCH_STRICT=1` is set.
+
+```bash
+cargo test -p contract-benchmarks -- --nocapture             # compare
+UPDATE_BENCHMARKS=1 cargo test -p contract-benchmarks        # refresh baseline after an intentional change
+```
+
+Contracts run natively in these tests, so the numbers exclude VM
+instantiation. Treat them as a regression signal, not a fee quote.
 
 ## Performance Optimizations
 

@@ -105,6 +105,21 @@ flowchart TB
   what it covers (follow the [GraphQL security best practices](https://graphql.org/learn/security/)
   linked from issue #1629 if you're extending this surface — this
   codebase has had real query-depth/complexity issues here before).
+  Every operation is checked in `server/graphql/security.ts` before any
+  resolver runs:
+  - **Introspection** (`__schema` / `__type`) is rejected when
+    `NODE_ENV=production`; it stays on in dev and staging. Set
+    `GRAPHQL_INTROSPECTION=true` to opt back in on a production build
+    (e.g. a staging deploy that runs with `NODE_ENV=production`).
+  - **Depth** is capped at 8 nested selections (`QUERY_TOO_DEEP`).
+  - **Cost** is capped at 1000 (`QUERY_TOO_COMPLEX`). Each object-typed
+    field costs 1 (scalars are free), and paginated/list fields multiply
+    their sub-selection by `take` (default 10, clamped to 100).
+  Rejected operations return HTTP 400 with the standard
+  `{ errors: [{ message, extensions: { code, ... } }] }` shape; the
+  extensions include the computed `depth`/`cost` and the limit, so clients
+  can tell how far over they are. Clients that hit a limit should split
+  the query or lower `take`.
 - **Realtime servers** (`server/realtime/`) — standalone WebSocket
   servers for collaboration (`collab.ts`) and WebRTC signaling
   (`signaling.ts`), separate from the HTTP request/response path.
@@ -120,10 +135,8 @@ flowchart TB
   Next.js-side equivalents without checking which one a given feature
   actually reads from — they are not interchangeable today.
 - **Soroban contracts** (`backend/contracts/`) — canonical on-chain logic.
-  The top-level `contracts/` directory (not pictured here) is legacy/
-  scaffold and not built by CI — see the note in the root
-  [README's Project Structure section](../README.md#project-structure)
-  before touching it.
+  The legacy top-level `contracts/` tree was archived (removed); see the
+  note in the root [README's Project Structure section](../README.md#project-structure).
 - **Data stores** — Postgres (Prisma) is the system of record; Redis and
   S3 are used from `lib/storage/` for caching/rate-limiting and object
   storage respectively. Both the TS and Rust indexers write Soroban
