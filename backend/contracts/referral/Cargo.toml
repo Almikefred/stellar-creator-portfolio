@@ -10,6 +10,7 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+stellar-upgradeable = { path = "../upgradeable" }
 soroban-sdk.workspace = true
 thiserror.workspace = true
 

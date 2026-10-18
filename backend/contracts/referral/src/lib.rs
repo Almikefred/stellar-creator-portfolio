@@ -1,8 +1,26 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    Env,
 };
+
+/// Errors raised by `register_referral` (Issue #1566). Surface on-chain as
+/// `Error(Contract, #n)`.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ReferralError {
+    /// `referrer == referred`.
+    SelfReferral = 1,
+    /// `referred` already has a referrer; a user can be referred only once.
+    AlreadyReferred = 2,
+    /// `referrer` was itself referred by `referred` (A→B then B→A).
+    ReferralLoop = 3,
+    /// `referred` has already referred someone else, so is an existing
+    /// participant rather than a new user. Closes loops of any length.
+    RefereeIsReferrer = 4,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -17,6 +35,7 @@ pub enum DataKey {
     Referral(Address), // referred -> Referral
     UnclaimedRewards(Address), // referrer -> i128
     ReferralCount(Address, u64), // referrer, month -> u32
+    HasReferred(Address), // referrer -> bool, set on first referral (Issue #1566)
     Admin,
     RewardToken,
 }
@@ -36,9 +55,51 @@ impl ReferralContract {
         env.storage().persistent().set(&DataKey::RewardToken, &reward_token);
     }
 
+    /// Record that `referrer` referred `referred`.
+    ///
+    /// Must be signed by `referred` — the new user consents to who referred
+    /// them, so a third party can't attach arbitrary accounts to a referrer.
+    ///
+    /// Rejected (Issue #1566) when:
+    /// * `referrer == referred` → `SelfReferral`
+    /// * `referred` already has a referrer → `AlreadyReferred`
+    /// * `referrer` was referred by `referred` → `ReferralLoop`
+    /// * `referred` has already referred anyone → `RefereeIsReferrer`
+    ///
+    /// The last rule means a referee is always a fresh participant, so no
+    /// edge can ever close a cycle (a cycle needs some node to be referred
+    /// after it has already referred someone). The explicit 2-cycle check also
+    /// covers referrers registered before `HasReferred` was tracked.
     pub fn register_referral(env: Env, referrer: Address, referred: Address) {
+        referred.require_auth();
+
+        if referrer == referred {
+            panic_with_error!(&env, ReferralError::SelfReferral);
+        }
+
         let key = DataKey::Referral(referred.clone());
-        assert!(!env.storage().persistent().has(&key), "Referral already registered");
+        if env.storage().persistent().has(&key) {
+            panic_with_error!(&env, ReferralError::AlreadyReferred);
+        }
+
+        if let Some(upstream) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Referral>(&DataKey::Referral(referrer.clone()))
+        {
+            if upstream.referrer == referred {
+                panic_with_error!(&env, ReferralError::ReferralLoop);
+            }
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::HasReferred(referred.clone()))
+            .unwrap_or(false)
+        {
+            panic_with_error!(&env, ReferralError::RefereeIsReferrer);
+        }
 
         let month = env.ledger().timestamp() / ONE_MONTH_SECS;
         let count_key = DataKey::ReferralCount(referrer.clone(), month);
@@ -56,6 +117,14 @@ impl ReferralContract {
 
         count += 1;
         env.storage().persistent().set(&count_key, &count);
+
+        let has_referred_key = DataKey::HasReferred(referrer.clone());
+        env.storage().persistent().set(&has_referred_key, &true);
+
+        let ledger_ttl = 30 * 24 * 3600 / 5; // ~30 days (5 second blocks)
+        env.storage().persistent().extend_ttl(&key, 4096, ledger_ttl);
+        env.storage().persistent().extend_ttl(&count_key, 4096, ledger_ttl);
+        env.storage().persistent().extend_ttl(&has_referred_key, 4096, ledger_ttl);
 
         env.events().publish(
             (symbol_short!("referral"), symbol_short!("reg")),
@@ -102,6 +171,86 @@ impl ReferralContract {
         );
 
         unclaimed
+    }
+
+    // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
+    //
+    // Replaces the old instant `upgrade` entrypoint. Shared logic lives in
+    // `stellar-upgradeable`; see docs/contracts.md (Upgrading a live contract).
+
+    /// Propose a WASM upgrade. Admin-only. Returns the ledger timestamp after
+    /// which `execute_upgrade` may be called (now + 48h). Emits
+    /// `(upgrade, proposed)`.
+    pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> u64 {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::propose_upgrade(&env, &admin, &stored_admin, new_wasm_hash)
+    }
+
+    /// Apply the pending upgrade once its timelock has elapsed. Admin-only.
+    /// Emits `(contract, upgraded)`.
+    pub fn execute_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::execute_upgrade(&env, &admin, &stored_admin);
+    }
+
+    /// Withdraw the pending upgrade. Admin-only. Emits `(upgrade, cancelled)`.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::cancel_upgrade(&env, &admin, &stored_admin);
+    }
+
+    /// The upgrade currently waiting out its timelock, if any.
+    pub fn get_pending_upgrade(env: Env) -> Option<stellar_upgradeable::PendingUpgrade> {
+        stellar_upgradeable::pending_upgrade(&env)
+    }
+
+    /// Nominate a new admin (step 1 of 2). Admin-only. Emits `(admin, proposed)`.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::propose_admin(&env, &admin, &stored_admin, &new_admin);
+    }
+
+    /// Accept a nomination (step 2 of 2). Must be signed by the nominee.
+    /// Emits `(admin, accepted)`.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        let accepted = stellar_upgradeable::accept_admin(&env, &new_admin, &stored_admin);
+        <class 'set'>
+    }
+
+    /// Withdraw a pending admin nomination. Admin-only. Emits `(admin, cancelled)`.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::cancel_admin_transfer(&env, &admin, &stored_admin);
+    }
+
+    /// The nominated-but-not-yet-accepted admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        stellar_upgradeable::pending_admin(&env)
     }
 
     pub fn get_unclaimed_rewards(env: Env, referrer: Address) -> i128 {

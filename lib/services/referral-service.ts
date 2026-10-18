@@ -112,12 +112,18 @@ export interface TrackReferralParams {
 
 export type TrackResult =
   | { success: true;  record: ReferralRecord }
-  | { success: false; reason: 'invalid_code' | 'self_referral' | 'duplicate' | 'fraud' };
+  | {
+      success: false;
+      reason: 'invalid_code' | 'self_referral' | 'duplicate' | 'referral_loop' | 'fraud';
+    };
 
 /**
  * Records a referral event, guarding against self-referral, duplicate
- * (referrer + referred + event) submissions, and IP-based fraud before
- * creating a new `ReferralRecord`.
+ * (referrer + referred + event) submissions, a second referrer for an
+ * already-referred user, referral loops, and IP-based fraud before creating
+ * a new `ReferralRecord`. Mirrors the on-chain rules in
+ * backend/contracts/referral (Issue #1566) so rejected referrals fail here
+ * before they ever reach the contract.
  */
 export function trackReferral(params: TrackReferralParams): TrackResult {
   const { code, referredUserId, event, ipAddress } = params;
@@ -128,10 +134,23 @@ export function trackReferral(params: TrackReferralParams): TrackResult {
   // Self-referral guard
   if (codeRecord.userId === referredUserId) return { success: false, reason: 'self_referral' };
 
-  // Duplicate guard: same referrer + referred + event
   for (const r of records.values()) {
+    // Duplicate guard: same referrer + referred + event
     if (r.referrerId === codeRecord.userId && r.referredUserId === referredUserId && r.event === event) {
       return { success: false, reason: 'duplicate' };
+    }
+    // A user has at most one referrer; later events must use the same one.
+    if (r.referredUserId === referredUserId && r.referrerId !== codeRecord.userId) {
+      return { success: false, reason: 'duplicate' };
+    }
+    // Loop guard: the referrer was themselves referred by this user (A→B, B→A),
+    // or this user has already referred others and so isn't a new user —
+    // either way rewards would flow in a circle.
+    if (
+      (r.referredUserId === codeRecord.userId && r.referrerId === referredUserId) ||
+      r.referrerId === referredUserId
+    ) {
+      return { success: false, reason: 'referral_loop' };
     }
   }
 
