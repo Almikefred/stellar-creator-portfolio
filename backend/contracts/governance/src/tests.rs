@@ -7,7 +7,7 @@ use stellar_contract_test_utils::{assert_requires_auth, new_address, test_env, u
 
 fn setup() -> (Env, GovernanceContractClient<'static>, Address) {
     let env = test_env();
-    let contract_id = env.register_contract(None, GovernanceContract);
+    let contract_id = env.register(GovernanceContract, ());
     let client = GovernanceContractClient::new(&env, &contract_id);
 
     let admin = new_address(&env);
@@ -104,7 +104,7 @@ fn test_quorum_threshold_is_governance_updatable() {
 #[test]
 fn test_set_quorum_percent_requires_auth() {
     let env = unauthorized_env();
-    let contract_id = env.register_contract(None, GovernanceContract);
+    let contract_id = env.register(GovernanceContract, ());
     let client = GovernanceContractClient::new(&env, &contract_id);
 
     let admin = new_address(&env);
@@ -140,7 +140,7 @@ fn test_initialize_sets_admin() {
 #[should_panic(expected = "Already initialized")]
 fn test_double_initialize_panics() {
     let env = test_env();
-    let contract_id = env.register_contract(None, GovernanceContract);
+    let contract_id = env.register(GovernanceContract, ());
     let client = GovernanceContractClient::new(&env, &contract_id);
     let admin = new_address(&env);
     client.initialize(&admin);

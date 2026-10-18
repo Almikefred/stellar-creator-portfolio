@@ -7,15 +7,15 @@ A full-stack platform connecting non-technical tech professionals (designers, wr
 The canonical contracts (`backend/contracts/`: `bounty`, `escrow`, `freelancer`,
 `governance`, `oracle`, `identity`) are built, tested, and deployed to testnet
 automatically by CI on every push to `main`
-([`deploy-contracts.yml`](.github/workflows/deploy-contracts.yml)). Their
-addresses are generated per deploy and published as that run's
-`contracts-testnet-<sha>` GitHub Actions artifact rather than pinned here —
-check the latest successful run of that workflow for the current addresses.
+([`deploy-contracts.yml`](.github/workflows/deploy-contracts.yml)). Each deploy
+commits the current addresses and WASM hashes to
+**[`deployments/testnet.json`](./deployments/testnet.json)**, which the app reads.
+See [`docs/deployments.md`](./docs/deployments.md) for the schema and runbook.
 
 The table below is a one-time manual testnet deployment of the **legacy
-top-level** `contracts/` tree (see the note below) — still live as of this
-writing, but not what CI builds or what the rest of the platform integrates
-against:
+top-level** `contracts/` tree. That tree has since been archived (see the note
+below). These contracts are still live as of this writing, but nothing in the
+platform integrates against them:
 
 | Contract | Address |
 |---|---|
@@ -35,12 +35,15 @@ Network passphrase: `Test SDF Network ; September 2015`
 | Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui |
 | Auth | NextAuth.js |
 | Database | PostgreSQL via Prisma ORM (Supabase recommended) |
-| Smart Contracts | Rust + Soroban SDK 23.5.3 (`backend/contracts/`, canonical); the legacy top-level `contracts/` tree still pins 21.7.7 |
+| Smart Contracts | Rust + Soroban SDK 23.5.3 (`backend/contracts/`), one SDK version across the repo |
 | Rust API | Actix-web |
 | Mobile | React Native (Expo) |
 | Payments | Stripe |
 | Storage | AWS S3 |
 | Monitoring | Sentry, OpenTelemetry |
+
+**TypeScript clients** for the contracts are generated into
+[`packages/contracts-ts`](./packages/contracts-ts/README.md).
 
 ## Project Structure
 
@@ -83,22 +86,16 @@ Network passphrase: `Test SDF Network ; September 2015`
 └── .husky/           # Git hooks (TS check, secret scan, size limit)
 ```
 
-> **Note on the two `contracts/` directories:** this repo has Soroban contract
-> code in both the top-level `contracts/` and `backend/contracts/`, including
-> overlapping names (`core`, `escrow`). **`backend/contracts/` is canonical.**
-> It's the workspace declared in `backend/Cargo.toml`, it's what CI actually
-> builds and tests (`cd backend && cargo test --all-features`), and its
-> implementations are substantially more complete — e.g. `backend/contracts/escrow`
-> is ~1,800 lines vs. ~430 in the top-level equivalent, and `backend/contracts/core`
-> is a full contract vs. a 5-line stub at the top level. The top-level `contracts/`
-> tree is not referenced by any workspace member list or CI job; treat it as
-> legacy/scaffold code pending removal or migration, not as a second deployment
-> target.
->
-> Additionally, three top-level contracts have **no equivalent in `backend/contracts/` at all**:
-> `contracts/amm` (constant-product AMM), `contracts/vault` (multi-vault batch withdrawal),
-> and `contracts/analytics` (on-chain event analytics). These exist only at the top level
-> and are likewise not built or tested by CI.
+> **Legacy `contracts/` tree (archived):** all Soroban contracts live in
+> `backend/contracts/`, the workspace in `backend/Cargo.toml`, and build against
+> a single `soroban-sdk = "23.5.3"`. The old top-level `contracts/` tree (`amm`,
+> `analytics`, `core`, `escrow`, `vault`) pinned soroban-sdk 21.7.7. No workspace
+> or CI job built it, so it was removed rather than upgraded. Its source,
+> including `amm`, `vault` and `analytics`, which have no `backend/contracts/`
+> equivalent and back the legacy testnet addresses above, is preserved in git
+> history at commit `734cff58`
+> (e.g. `git show 734cff58:contracts/vault/src/lib.rs`). To revive one, port it
+> into `backend/contracts/` against SDK 23.
 
 See [`docs/architecture.md`](./docs/architecture.md) for a platform-wide
 diagram of how the Next.js app, tRPC/GraphQL/REST, the Rust API, realtime
