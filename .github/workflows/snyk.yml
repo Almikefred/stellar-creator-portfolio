@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -30,7 +30,7 @@ jobs:
           version: 10
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: pnpm
@@ -48,7 +48,7 @@ jobs:
           args: --all-projects --severity-threshold=high --sarif-file-output=snyk-npm.sarif
 
       - name: Upload npm SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: snyk-npm.sarif
@@ -56,7 +56,7 @@ jobs:
 
       # ── Cargo (Rust) scan ───────────────────────────────────────────────────
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@1.89.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Snyk — Cargo dependencies
         uses: snyk/actions/rust@v1
@@ -66,7 +66,7 @@ jobs:
           args: --file=backend/Cargo.toml --severity-threshold=high --sarif-file-output=snyk-cargo.sarif
 
       - name: Upload Cargo SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: snyk-cargo.sarif
@@ -82,7 +82,7 @@ jobs:
           args: --severity-threshold=high --sarif-file-output=snyk-code.sarif
 
       - name: Upload SAST SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: snyk-code.sarif
