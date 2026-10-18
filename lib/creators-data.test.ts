@@ -10,7 +10,7 @@ import {
   getBountiesByDifficulty,
   creators,
   bounties,
-} from './creators-data';
+} from './services/creators-data';
 
 describe('getCreatorsByDiscipline', () => {
   it('returns all creators for "All"', () => {
@@ -45,41 +45,41 @@ describe('getCreatorById', () => {
 
 describe('searchCreators', () => {
   it('returns all creators for empty query', () => {
-    expect(searchCreators('')).toHaveLength(creators.length);
+    expect(searchCreators({ query: '' })).toHaveLength(creators.length);
   });
 
   it('matches by name (case-insensitive)', () => {
-    const result = searchCreators('alex');
+    const result = searchCreators({ query: 'alex' });
     expect(result.some(c => c.name.toLowerCase().includes('alex'))).toBe(true);
   });
 
   it('matches by skill', () => {
-    const result = searchCreators('figma');
+    const result = searchCreators({ query: 'figma' });
     expect(result.some(c => c.skills.some(s => s.toLowerCase() === 'figma'))).toBe(true);
   });
 
   it('matches by bio keyword', () => {
-    const result = searchCreators('accessibility');
+    const result = searchCreators({ query: 'accessibility' });
     expect(result.length).toBeGreaterThan(0);
   });
 
   it('filters by discipline alongside query', () => {
-    const result = searchCreators('', 'Writing');
+    const result = searchCreators({ discipline: 'Writing' });
     expect(result.every(c => c.discipline === 'Writing')).toBe(true);
   });
 
   it('returns empty for no match', () => {
-    expect(searchCreators('zzznomatch')).toHaveLength(0);
+    expect(searchCreators({ query: 'zzznomatch' })).toHaveLength(0);
   });
 });
 
 describe('formatAvailability', () => {
   it('formats available', () => {
-    expect(formatAvailability('available')).toBe('Available now');
+    expect(formatAvailability('available')).toBe('Available');
   });
 
   it('formats limited', () => {
-    expect(formatAvailability('limited')).toBe('Limited availability');
+    expect(formatAvailability('limited')).toBe('Limited Availability');
   });
 
   it('formats unavailable', () => {
@@ -87,7 +87,7 @@ describe('formatAvailability', () => {
   });
 
   it('handles undefined', () => {
-    expect(formatAvailability(undefined)).toBe('Status unknown');
+    expect(formatAvailability(undefined)).toBe('Unknown');
   });
 });
 

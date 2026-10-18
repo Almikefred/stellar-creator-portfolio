@@ -5,7 +5,7 @@
 
 import { nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import type { ClientOptions, Spec } from '@stellar/stellar-sdk/contract';
-import { bounty, escrow, freelancer, governance } from '@/packages/contracts-ts/src';
+import { bounty, escrow, freelancer, governance, identity, oracle } from '@/packages/contracts-ts/src';
 import { CONTRACT_NAMES, currentNetwork, getContractId, type ContractName } from '@/lib/contracts/deployments';
 
 const CLIENTS = {
@@ -13,6 +13,8 @@ const CLIENTS = {
   escrow: escrow.Client,
   freelancer: freelancer.Client,
   governance: governance.Client,
+  identity: identity.Client,
+  oracle: oracle.Client,
 };
 
 export type ContractClient<N extends ContractName> = InstanceType<(typeof CLIENTS)[N]>;

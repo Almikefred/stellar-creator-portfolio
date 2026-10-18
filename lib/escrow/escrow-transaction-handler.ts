@@ -7,14 +7,13 @@
  * 3. Automatic deadlock retry with exponential backoff
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '@/lib/prisma';
 import {
   executeTransaction,
   IsolationLevel,
-  TransactionOptions,
   deadlockDetector,
-} from "@/lib/db/transaction-manager";
-import { acquireLocksInOrder, LockMode } from "@/lib/db/pessimistic-lock";
+} from '@/lib/db/transaction-manager';
+import { acquireLocksInOrder, LockMode } from '@/lib/db/pessimistic-lock';
 
 /**
  * Release escrow funds to payee
@@ -31,10 +30,10 @@ export async function releaseEscrowFunds(
         // Acquire locks in strict order: creator → client → escrow → balance
         const locks = await acquireLocksInOrder(
           [
-            { type: "creator", id: creatorId },
-            { type: "client", id: clientId },
-            { type: "escrow", id: escrowId },
-            { type: "balance", id: creatorId },
+            { type: 'creator', id: creatorId },
+            { type: 'client', id: clientId },
+            { type: 'escrow', id: escrowId },
+            { type: 'balance', id: creatorId },
           ],
           LockMode.EXCLUSIVE,
         );
@@ -48,7 +47,7 @@ export async function releaseEscrowFunds(
           throw new Error(`Escrow not found: ${escrowId}`);
         }
 
-        if (escrow.status !== "active") {
+        if (escrow.status !== 'active') {
           throw new Error(`Escrow is not active: ${escrow.status}`);
         }
 
@@ -56,7 +55,7 @@ export async function releaseEscrowFunds(
         const updatedEscrow = await prisma.escrow.update({
           where: { id: escrowId },
           data: {
-            status: "released",
+            status: 'released',
             releasedAt: new Date(),
           },
         });
@@ -79,11 +78,11 @@ export async function releaseEscrowFunds(
         // Record transaction
         await prisma.transaction.create({
           data: {
-            type: "escrow_release",
+            type: 'escrow_release',
             userId: creatorId,
             amount: escrow.amount,
             escrowId: escrowId,
-            status: "completed",
+            status: 'completed',
           },
         });
 
@@ -101,9 +100,9 @@ export async function releaseEscrowFunds(
     const err = error as Error;
 
     // Detect and log deadlocks
-    if (err.message.includes("deadlock")) {
+    if (err.message.includes('deadlock')) {
       deadlockDetector.recordDeadlock(
-        ["creator", "client", "escrow", "balance"],
+        ['creator', 'client', 'escrow', 'balance'],
         err.message,
       );
     }
@@ -131,10 +130,10 @@ export async function refundEscrow(
         // Acquire locks in strict order: creator → client → escrow → balance
         const locks = await acquireLocksInOrder(
           [
-            { type: "creator", id: creatorId },
-            { type: "client", id: clientId },
-            { type: "escrow", id: escrowId },
-            { type: "balance", id: clientId },
+            { type: 'creator', id: creatorId },
+            { type: 'client', id: clientId },
+            { type: 'escrow', id: escrowId },
+            { type: 'balance', id: clientId },
           ],
           LockMode.EXCLUSIVE,
         );
@@ -148,7 +147,7 @@ export async function refundEscrow(
           throw new Error(`Escrow not found: ${escrowId}`);
         }
 
-        if (escrow.status !== "active") {
+        if (escrow.status !== 'active') {
           throw new Error(`Escrow is not active: ${escrow.status}`);
         }
 
@@ -156,7 +155,7 @@ export async function refundEscrow(
         const updatedEscrow = await prisma.escrow.update({
           where: { id: escrowId },
           data: {
-            status: "refunded",
+            status: 'refunded',
             refundedAt: new Date(),
           },
         });
@@ -179,11 +178,11 @@ export async function refundEscrow(
         // Record transaction
         await prisma.transaction.create({
           data: {
-            type: "escrow_refund",
+            type: 'escrow_refund',
             userId: clientId,
             amount: escrow.amount,
             escrowId: escrowId,
-            status: "completed",
+            status: 'completed',
           },
         });
 
@@ -201,9 +200,9 @@ export async function refundEscrow(
     const err = error as Error;
 
     // Detect and log deadlocks
-    if (err.message.includes("deadlock")) {
+    if (err.message.includes('deadlock')) {
       deadlockDetector.recordDeadlock(
-        ["creator", "client", "escrow", "balance"],
+        ['creator', 'client', 'escrow', 'balance'],
         err.message,
       );
     }
@@ -232,9 +231,9 @@ export async function disputeEscrow(
         // Acquire locks in strict order
         const locks = await acquireLocksInOrder(
           [
-            { type: "creator", id: creatorId },
-            { type: "client", id: clientId },
-            { type: "escrow", id: escrowId },
+            { type: 'creator', id: creatorId },
+            { type: 'client', id: clientId },
+            { type: 'escrow', id: escrowId },
           ],
           LockMode.EXCLUSIVE,
         );
@@ -252,7 +251,7 @@ export async function disputeEscrow(
         const updatedEscrow = await prisma.escrow.update({
           where: { id: escrowId },
           data: {
-            status: "disputed",
+            status: 'disputed',
             disputeReason: reason,
             disputedAt: new Date(),
           },
@@ -265,7 +264,7 @@ export async function disputeEscrow(
             creatorId: creatorId,
             clientId: clientId,
             reason: reason,
-            status: "open",
+            status: 'open',
           },
         });
 
@@ -282,9 +281,9 @@ export async function disputeEscrow(
   } catch (error) {
     const err = error as Error;
 
-    if (err.message.includes("deadlock")) {
+    if (err.message.includes('deadlock')) {
       deadlockDetector.recordDeadlock(
-        ["creator", "client", "escrow"],
+        ['creator', 'client', 'escrow'],
         err.message,
       );
     }

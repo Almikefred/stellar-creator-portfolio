@@ -1,15 +1,18 @@
 import * as React from 'react'
+import { motion, type HTMLMotionProps } from 'framer-motion'
 
 import { cn } from '@/lib/utils'
 
-function Card({ className, ...props }: React.ComponentProps<'div'>) {
+function Card({ className, ...props }: HTMLMotionProps<'div'>) {
   return (
-    <div
+    <motion.div
       data-slot="card"
       className={cn(
         'bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm',
         className,
       )}
+      whileHover={{ y: -2 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       {...props}
     />
   )

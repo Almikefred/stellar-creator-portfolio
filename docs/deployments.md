@@ -22,7 +22,7 @@ artifacts.
 }
 ```
 
-`contracts` keys are `bounty`, `escrow`, `freelancer` and `governance`. A
+`contracts` keys are `bounty`, `escrow`, `freelancer`, `governance`, `identity` and `oracle`. A
 contract that has never been deployed to a network is absent. A brand-new
 manifest has `"contracts": {}` and null `gitSha`/`deployedAt`.
 `__tests__/contract-deployments.test.ts` validates every file in
@@ -46,18 +46,18 @@ manifest has `"contracts": {}` and null `gitSha`/`deployedAt`.
 
 ### Deploy to testnet
 
-The workflow runs automatically on pushes to `main` that touch
-`backend/contracts/**`, `backend/Cargo.{toml,lock}` or `scripts/deploy.cjs`.
-To run it manually:
+The workflow runs automatically on every push to `main`. To run it manually:
 
-1. Go to **Actions → Deploy Contracts (Testnet) → Run workflow** and pick the
+1. Go to **Actions → Deploy Soroban Contracts → Run workflow** and pick the
    branch. Running on a feature branch is a safe dry run: the manifest commit
    goes to that branch.
-2. The workflow builds the four contracts for `wasm32v1-none` and deploys
-   them with `scripts/deploy.cjs --manifest deployments/testnet.json`. It
-   uploads the manifest and WASM as the `contracts-testnet-<sha>` artifact,
-   then commits the manifest as `github-actions[bot]` with `[skip ci]`.
-3. The run summary prints the new manifest.
+2. The workflow runs the contract tests. It then builds and optimizes the six
+   contracts for `wasm32v1-none` and deploys them with
+   `scripts/deploy.cjs --manifest deployments/testnet.json`. It uploads
+   `contracts.json` and the manifest as the `contracts-testnet-<sha>`
+   artifact, then commits the manifest as `github-actions[bot]` with
+   `[skip ci]`.
+3. The run summary links to the committed manifest.
 
 Deployer account: set the `TESTNET_DEPLOYER_SECRET` repository secret to
 deploy from a fixed account. Without it, the workflow generates a throwaway

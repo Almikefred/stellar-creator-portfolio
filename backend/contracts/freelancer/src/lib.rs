@@ -1,4 +1,8 @@
 #![no_std]
+// `Events::publish` is deprecated in soroban-sdk 23 in favour of `#[contractevent]`.
+// Migrating changes the on-chain event topic/data layout the indexer decodes,
+// so it is kept as-is for the SDK upgrade and tracked as a separate change.
+#![allow(deprecated)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, String, Symbol};
 
@@ -252,6 +256,23 @@ impl FreelancerContract {
             .persistent()
             .get::<(Symbol, Address), IdentityMetadata>(&identity_key)
             .expect("Identity metadata not found")
+    }
+
+    // ── Issue #732: Contract upgrade mechanism ────────────────────────────────
+
+    /// Upgrade the contract WASM. Only the contract owner (governance multisig)
+    /// may call this. Emits an `upgraded` event with the new wasm hash.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        admin.require_auth();
+        let owner = Self::get_owner(&env);
+        assert_eq!(admin, owner, "unauthorized");
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "contract"), Symbol::new(&env, "upgraded")),
+            new_wasm_hash,
+        );
     }
 }
 

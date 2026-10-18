@@ -47,6 +47,26 @@ interface UseWebSocketOptions {
   reconnectDelay?: number;
 }
 
+/**
+ * Custom React hook for managing WebSocket connections with automatic reconnection and lifecycle handling.
+ *
+ * Key capabilities:
+ * - Automatically connects to the provided WebSocket URL and cleans up on unmount
+ * - Handles reconnection with configurable attempt counts and backoff delay
+ * - Parses incoming messages and dispatches errors when parsing fails
+ * - Tracks connection state (`isConnected`) and notifies on connection transitions
+ * - Provides a safe `send` method that validates socket readiness
+ * - Provides a manual `disconnect` method that prevents zombie reconnect loops
+ *
+ * @param options - Configuration options for the WebSocket connection
+ * @param options.url - The WebSocket server endpoint URL
+ * @param options.onMessage - Optional callback invoked when a parsed message is received
+ * @param options.onError - Optional callback invoked on connection or message parsing error
+ * @param options.onConnectionChange - Optional callback invoked on connection state transitions
+ * @param options.reconnectAttempts - Maximum number of reconnection attempts before giving up (default: 5)
+ * @param options.reconnectDelay - Delay in milliseconds between reconnection attempts (default: 3000)
+ * @returns An object containing `isConnected` status, `send` function to transmit messages, and `disconnect` function
+ */
 export function useWebSocket({
   url,
   onMessage,
@@ -58,7 +78,23 @@ export function useWebSocket({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCountRef = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const intentionalCloseRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
+
+  // Store callbacks in refs so connect() doesn't need to depend on them
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+  const onConnectionChangeRef = useRef(onConnectionChange);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+    onErrorRef.current = onError;
+    onConnectionChangeRef.current = onConnectionChange;
+  }, [onMessage, onError, onConnectionChange]);
+
+  // connect() schedules itself on reconnect; going through a ref lets the
+  // timer call the latest version without the callback referencing itself.
+  const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
     try {
@@ -67,7 +103,7 @@ export function useWebSocket({
       ws.onopen = () => {
         setIsConnected(true);
         reconnectCountRef.current = 0;
-        onConnectionChange?.({
+        onConnectionChangeRef.current?.({
           status: 'connected',
           message: 'WebSocket connected',
         });
@@ -76,17 +112,17 @@ export function useWebSocket({
       ws.onmessage = (event) => {
         try {
           const message: WebSocketMessage<WebSocketEventType> = JSON.parse(event.data);
-          onMessage?.(message);
+          onMessageRef.current?.(message);
         } catch (err) {
           const error = err instanceof Error ? err : new Error('Failed to parse message');
-          onError?.(error);
+          onErrorRef.current?.(error);
         }
       };
 
       ws.onerror = () => {
         const error = new Error('WebSocket error occurred');
-        onError?.(error);
-        onConnectionChange?.({
+        onErrorRef.current?.(error);
+        onConnectionChangeRef.current?.({
           status: 'error',
           message: error.message,
         });
@@ -94,16 +130,22 @@ export function useWebSocket({
 
       ws.onclose = () => {
         setIsConnected(false);
-        onConnectionChange?.({
+        onConnectionChangeRef.current?.({
           status: 'disconnected',
           message: 'WebSocket disconnected',
         });
+
+        // Skip reconnect if the close was intentional (e.g. component unmount
+        // or an explicit disconnect() call) to avoid zombie connections.
+        if (intentionalCloseRef.current) {
+          return;
+        }
 
         // Attempt reconnection
         if (reconnectCountRef.current < reconnectAttempts) {
           reconnectCountRef.current += 1;
           reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
+            connectRef.current();
           }, reconnectDelay);
         }
       };
@@ -111,9 +153,13 @@ export function useWebSocket({
       wsRef.current = ws;
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to connect');
-      onError?.(error);
+      onErrorRef.current?.(error);
     }
-  }, [url, onMessage, onError, onConnectionChange, reconnectAttempts, reconnectDelay]);
+  }, [url, reconnectAttempts, reconnectDelay]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const send = useCallback(
     (message: WebSocketMessage<WebSocketEventType>) => {
@@ -121,13 +167,15 @@ export function useWebSocket({
         wsRef.current.send(JSON.stringify(message));
       } else {
         const error = new Error('WebSocket is not connected');
-        onError?.(error);
+        onErrorRef.current?.(error);
       }
     },
-    [onError]
+    []
   );
 
   const disconnect = useCallback(() => {
+    // Mark as intentional so the onclose handler skips the reconnect branch.
+    intentionalCloseRef.current = true;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }

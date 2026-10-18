@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getReviewsForCreator } from "@/lib/services/review-service";
+import { NextRequest, NextResponse } from 'next/server';
+import { getReviewsForCreator } from '@/lib/services/review-service';
 
 /**
  * POST /api/creators/reviews/batch
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
 
     if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
       return NextResponse.json(
-        { error: "creatorIds must be a non-empty array" },
+        { error: 'creatorIds must be a non-empty array' },
         { status: 400 },
       );
     }
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     // Limit batch size to prevent abuse
     if (creatorIds.length > 100) {
       return NextResponse.json(
-        { error: "Maximum 100 creators per batch" },
+        { error: 'Maximum 100 creators per batch' },
         { status: 400 },
       );
     }
@@ -44,9 +44,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(results);
   } catch (error) {
-    console.error("Batch reviews fetch error:", error);
+    console.error('Batch reviews fetch error:', error);
     return NextResponse.json(
-      { error: "Failed to fetch reviews" },
+      { error: 'Failed to fetch reviews' },
       { status: 500 },
     );
   }

@@ -4,7 +4,7 @@
  * Flow:
  *  1. Generate a WC URI (wc:…) via the WC v2 pairing API
  *  2. Deep-link the user's wallet app with that URI
- *  3. Listen for the `stellar://wc` callback carrying the session topic
+ *  3. Listen for the `tamgora://wc` callback carrying the session topic
  *  4. Verify the returned Stellar public key (G…, 56 chars)
  *  5. Exchange for a JWT via the backend auth endpoint
  *
@@ -13,17 +13,24 @@
  * Replace RELAY_URL / PROJECT_ID with real values from cloud.walletconnect.com.
  */
 
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const WC_PROJECT_ID = "YOUR_WALLETCONNECT_PROJECT_ID"; // replace
 const RELAY_URL = "wss://relay.walletconnect.com";
-const APP_SCHEME = "stellar"; // must match app.json scheme
-const CALLBACK_PATH = "wc"; // stellar://wc?topic=…&key=…
+const APP_SCHEME = "tamgora"; // must match app.json scheme
+const CALLBACK_PATH = "wc"; // tamgora://wc?topic=…&key=…
 
 const STORAGE_KEY_SESSION = "@stellar/wc_session";
+// The backend JWT is a sensitive auth credential — it goes through
+// expo-secure-store (Keychain/Keystore-backed), not AsyncStorage, which is
+// unencrypted and readable on rooted/jailbroken devices and from backups
+// (see issue: "Mobile: secure token storage with SecureStore"). The pairing
+// session (topic/public key/expiry) is not a secret, so it stays in
+// AsyncStorage for fast, synchronous-feeling access.
 const STORAGE_KEY_TOKEN = "@stellar/auth_token";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -111,16 +118,18 @@ export async function openWalletWithUri(wcUri: string): Promise<void> {
 
   for (const url of candidates) {
     const canOpen = await Linking.canOpenURL(url).catch(() => false);
-    if (canOpen) {
-      await Linking.openURL(url);
-      return;
-    }
+    if (!canOpen) continue;
+    await Linking.openURL(url);
+    return;
   }
 
-  // Last resort: open WalletConnect web modal
-  await Linking.openURL(
-    `https://walletconnect.com/wc?uri=${encoded}`
-  );
+  // canOpenURL is false for schemes missing from LSApplicationQueriesSchemes.
+  // Still attempt the raw wc: URI before the web fallback.
+  try {
+    await Linking.openURL(wcUri);
+  } catch {
+    await Linking.openURL(`https://walletconnect.com/wc?uri=${encoded}`);
+  }
 }
 
 // ─── Callback parser ──────────────────────────────────────────────────────────
@@ -131,16 +140,21 @@ export interface WCCallbackParams {
 }
 
 /**
- * Parse the deep-link callback URL: stellar://wc?topic=…&key=…
+ * Parse the deep-link callback URL: tamgora://wc?topic=…&key=…
  * Returns null if the URL is not a valid WC callback.
  */
 export function parseWCCallback(url: string): WCCallbackParams | null {
   try {
-    // Expo Linking normalises the URL; handle both stellar:// and exp://
-    const parsed = new URL(url.replace(/^stellar:\/\//, "https://stellar.app/"));
-    if (!parsed.pathname.includes(CALLBACK_PATH) && !url.includes(`${APP_SCHEME}://${CALLBACK_PATH}`)) {
-      return null;
-    }
+    // Custom schemes are not reliably parsed by URL. Normalize to https first.
+    const parsed = new URL(url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "https://callback.invalid/"));
+    const host = parsed.hostname;
+    const path = parsed.pathname.replace(/^\//, "");
+    const isCallback =
+      host === CALLBACK_PATH ||
+      path === CALLBACK_PATH ||
+      path.startsWith(`${CALLBACK_PATH}/`) ||
+      url.includes(`${APP_SCHEME}://${CALLBACK_PATH}`);
+    if (!isCallback) return null;
     const topic = parsed.searchParams.get("topic");
     const publicKey = parsed.searchParams.get("key");
     if (!topic || !publicKey || !isValidStellarKey(publicKey)) return null;
@@ -172,7 +186,10 @@ export async function loadSession(): Promise<WCSession | null> {
 }
 
 export async function clearSession(): Promise<void> {
-  await AsyncStorage.multiRemove([STORAGE_KEY_SESSION, STORAGE_KEY_TOKEN]);
+  await Promise.all([
+    AsyncStorage.removeItem(STORAGE_KEY_SESSION),
+    SecureStore.deleteItemAsync(STORAGE_KEY_TOKEN),
+  ]);
 }
 
 // ─── Backend auth exchange ────────────────────────────────────────────────────
@@ -206,17 +223,17 @@ export async function exchangeForToken(
     token: data.token,
     expiresAt: data.expiresAt ?? Date.now() / 1000 + 3600,
   };
-  await AsyncStorage.setItem(STORAGE_KEY_TOKEN, JSON.stringify(authToken));
+  await SecureStore.setItemAsync(STORAGE_KEY_TOKEN, JSON.stringify(authToken));
   return authToken;
 }
 
 export async function loadToken(): Promise<AuthToken | null> {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY_TOKEN);
+    const raw = await SecureStore.getItemAsync(STORAGE_KEY_TOKEN);
     if (!raw) return null;
     const token: AuthToken = JSON.parse(raw);
     if (token.expiresAt < Date.now() / 1000) {
-      await AsyncStorage.removeItem(STORAGE_KEY_TOKEN);
+      await SecureStore.deleteItemAsync(STORAGE_KEY_TOKEN);
       return null;
     }
     return token;

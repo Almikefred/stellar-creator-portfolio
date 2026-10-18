@@ -8,7 +8,7 @@
 import { createTRPCReact } from '@trpc/react-query';
 import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
 import { QueryClient } from '@tanstack/react-query';
-import type { AppRouter } from '@/backend/src/router';
+import type { AppRouter } from '@/server/api/router';
 
 // ─── tRPC React Hooks ─────────────────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000, // 5 minutes
-      cacheTime: 10 * 60 * 1000, // 10 minutes
+      gcTime: 10 * 60 * 1000, // 10 minutes (renamed from cacheTime in React Query v5)
       retry: (failureCount, error: any) => {
         // Don't retry on 4xx errors
         if (error?.data?.httpStatus >= 400 && error?.data?.httpStatus < 500) {
@@ -84,8 +84,10 @@ export function useTrpcErrorHandler() {
       console.error('tRPC Error:', error);
       // Could integrate with toast notifications here
       if (error?.data?.code === 'UNAUTHORIZED') {
-        // Redirect to login
-        window.location.href = '/login';
+        // Redirect to login, returning here afterwards
+        const login = new URL('/auth/login', window.location.origin);
+        login.searchParams.set('callbackUrl', window.location.pathname);
+        window.location.assign(login.toString());
       }
     },
   };

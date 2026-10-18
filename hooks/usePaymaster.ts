@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { sponsorTransaction, friendlyTxStatus, SmartWalletInterface } from '@/lib/payments/paymasterClient';
+import { sponsorTransaction, SmartWalletInterface } from '@/lib/payments/paymasterClient';
 
 interface UsePaymasterResult {
   submit: (signedXdr: string, wallet?: SmartWalletInterface) => Promise<void>;

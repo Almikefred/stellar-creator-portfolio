@@ -1,35 +1,50 @@
-name: Deploy Contracts (Testnet)
-
-# Deploys the canonical contracts to testnet and commits the resulting
-# contract IDs / WASM hashes to deployments/testnet.json so the app, docs and
-# mobile client have one stable place to read them. See docs/deployments.md.
+# CI workflow: deploy-contracts
+# Purpose: Builds and deploys Soroban smart contracts to Testnet on every
+# push to main. Runs contract unit tests before deploying, then commits the
+# resulting contract IDs / WASM hashes to deployments/testnet.json so the app,
+# docs and mobile client have one stable place to read them
+# (see docs/deployments.md).
+# Mainnet deployments are handled separately by deploy-mainnet.yml and
+# require a published GitHub release + manual environment approval.
+# Caching: Cargo registry + target directory (Swatinem/rust-cache).
+name: Deploy Soroban Contracts
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - 'backend/contracts/**'
-      - 'backend/Cargo.toml'
-      - 'backend/Cargo.lock'
-      - 'scripts/deploy.cjs'
+  workflow_dispatch:
 
 concurrency:
   group: deploy-contracts-testnet
   cancel-in-progress: false
 
-permissions:
-  contents: write
-
 env:
   STELLAR_CLI_VERSION: 28.1.0
-  STELLAR_NETWORK: testnet
-  STELLAR_RPC_URL: https://soroban-testnet.stellar.org
-  STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+  TESTNET_RPC_URL: https://soroban-testnet.stellar.org
+  TESTNET_PASSPHRASE: "Test SDF Network ; September 2015"
+  MAINNET_RPC_URL: https://soroban-mainnet.stellar.org
+  MAINNET_PASSPHRASE: "Public Global Stellar Network ; September 2015"
 
 jobs:
-  deploy:
-    name: Deploy to Testnet
+  test:
+    name: Run Contract Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Run tests
+        run: cd backend && cargo test --workspace --all-features
+
+  build:
+    name: Build Contracts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -51,17 +66,56 @@ jobs:
           stellar --version
 
       - name: Build contracts
+        # soroban-sdk 23 only supports wasm32v1-none on Rust >= 1.82. Package
+        # names are the real Cargo package names (see
+        # backend/contracts/*/Cargo.toml), not the short directory names —
+        # only `oracle`'s package happens to match its directory name.
         run: |
-          cd backend
-          cargo build --release --target wasm32v1-none \
-            -p stellar-bounty-contract \
-            -p stellar-escrow-contract \
-            -p stellar-freelancer-contract \
-            -p stellar-governance-contract
-          mkdir -p ../artifacts
-          for c in bounty escrow freelancer governance; do
-            cp "target/wasm32v1-none/release/stellar_${c}_contract.wasm" "../artifacts/${c}.wasm"
+          cd backend && cargo build --release --target wasm32v1-none \
+            --package stellar-bounty-contract \
+            --package stellar-escrow-contract \
+            --package stellar-freelancer-contract \
+            --package stellar-governance-contract \
+            --package oracle \
+            --package stellar-identity-contract
+
+      - name: Optimize WASM
+        run: |
+          for f in backend/target/wasm32v1-none/release/*.wasm; do
+            stellar contract optimize --wasm "$f" --wasm-out "$f"
           done
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-wasm-${{ github.sha }}
+          path: backend/target/wasm32v1-none/release/*.wasm
+          if-no-files-found: error
+
+  deploy-testnet:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    environment: testnet
+    permissions:
+      contents: write             # commit deployments/testnet.json
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm-${{ github.sha }}
+          path: artifacts
+
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin stellar
 
       - name: Configure deployer
         env:
@@ -75,18 +129,22 @@ jobs:
             echo "STELLAR_ADMIN_SECRET=ci-deployer" >> "$GITHUB_ENV"
           fi
 
-      - name: Deploy contracts
+      - name: Deploy contracts to Testnet
+        id: deploy
         env:
+          STELLAR_NETWORK: testnet
+          STELLAR_RPC_URL: ${{ env.TESTNET_RPC_URL }}
+          STELLAR_NETWORK_PASSPHRASE: ${{ env.TESTNET_PASSPHRASE }}
           WASM_DIR: artifacts
         run: node scripts/deploy.cjs --manifest deployments/testnet.json
 
       - name: Upload deployment artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: contracts-testnet-${{ github.sha }}
           path: |
+            contracts.json
             deployments/testnet.json
-            artifacts/*.wasm
 
       - name: Commit manifest
         run: |
@@ -101,12 +159,61 @@ jobs:
           git pull --rebase origin "$GITHUB_REF_NAME"
           git push origin "HEAD:$GITHUB_REF_NAME"
 
-      - name: Summary
+  notify:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: deploy-testnet
+    if: always()
+    steps:
+      - name: Determine status
+        id: status
         run: |
-          {
-            echo "## Testnet deployment"
-            echo
-            echo '```json'
-            cat deployments/testnet.json
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          TESTNET_RESULT="${{ needs.deploy-testnet.result }}"
+          if [[ "$TESTNET_RESULT" == "failure" ]]; then
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"
+            echo "color=danger" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "emoji=✅" >> "$GITHUB_OUTPUT"
+            echo "color=good" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post to Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [[ -z "$SLACK_WEBHOOK_URL" ]]; then
+            echo "SLACK_WEBHOOK_URL not set, skipping notification"
+            exit 0
+          fi
+          curl -fsSL -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "${{ steps.status.outputs.emoji }} *Soroban Contract Testnet Deployment* — `${{ github.sha }}`",
+              "attachments": [{
+                "color": "${{ steps.status.outputs.color }}",
+                "fields": [
+                  {"title": "Status", "value": "${{ steps.status.outputs.status }}", "short": true},
+                  {"title": "Branch", "value": "`${{ github.ref_name }}`", "short": true},
+                  {"title": "Run", "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>", "short": false}
+                ]
+              }]
+            }'
+
+      - name: Create GitHub deployment summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << 'EOF'
+          ## ${{ steps.status.outputs.emoji }} Testnet Deployment — `${{ github.sha }}`
+
+          | Stage | Result |
+          |---|---|
+          | Testnet | ${{ needs.deploy-testnet.result }} |
+
+          Contract IDs: [`deployments/testnet.json`](${{ github.server_url }}/${{ github.repository }}/blob/main/deployments/testnet.json)
+
+          [View full run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ℹ️ Mainnet deployments are managed by the release workflow (deploy-mainnet.yml).
+          EOF

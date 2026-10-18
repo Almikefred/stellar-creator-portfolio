@@ -1,0 +1,22 @@
+# Development Dockerfile for Rust API (stellar-api)
+FROM rust:1.74-bookworm
+
+WORKDIR /app
+
+# Install native dependencies for build and curl for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace configuration and sources
+COPY Cargo.toml Cargo.lock ./
+COPY contracts ./contracts
+COPY services ./services
+COPY tests ./tests
+
+EXPOSE 3001
+
+CMD ["cargo", "run", "--bin", "stellar-api"]

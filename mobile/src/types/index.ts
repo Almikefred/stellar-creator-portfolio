@@ -1,3 +1,65 @@
+// ─── Theme Types ──────────────────────────────────────────────────────────────
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+// ─── Preference Types ─────────────────────────────────────────────────────────
+
+export type NotificationLevel = 'none' | 'critical' | 'important' | 'all';
+
+export type DataUsageMode = 'standard' | 'low' | 'economy';
+
+export interface UserPreferences {
+  // Appearance
+  themeMode: ThemeMode;
+  
+  // Notifications
+  notificationEnabled: boolean;
+  notificationLevel: NotificationLevel;
+  vibrationEnabled: boolean;
+  soundEnabled: boolean;
+  
+  // Data & Storage
+  dataUsageMode: DataUsageMode;
+  autoDownloadMedia: boolean;
+  cacheClearOnExit: boolean;
+  
+  // Privacy
+  profileVisibleToPublic: boolean;
+  showLastSeen: boolean;
+  allowScreenRecording: boolean;
+  
+  // Accessibility
+  largerTextEnabled: boolean;
+  highContrastEnabled: boolean;
+  
+  // Features
+  biometricAuthEnabled: boolean;
+  darkModeAutoSwitch: boolean;
+}
+
+// ─── Preference Category Types ────────────────────────────────────────────────
+
+export type PreferenceCategory = 
+  | 'appearance'
+  | 'notifications'
+  | 'privacy'
+  | 'data'
+  | 'accessibility'
+  | 'account'
+  | 'about';
+
+export interface PreferenceOption<T = string | boolean | number> {
+  key: string;
+  label: string;
+  description?: string;
+  value: T;
+  type: 'switch' | 'picker' | 'slider' | 'action';
+  options?: Array<{ value: T; label: string; description?: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
 // ─── Navigation Types ──────────────────────────────────────────────────────────
 
 export type RootStackParamList = {
@@ -16,6 +78,11 @@ export type RootStackParamList = {
   BiometricAuth: undefined;
   StreamHost: { roomId: string; signalingServerUrl?: string };
   StreamViewer: { roomId: string; creatorName?: string; signalingServerUrl?: string };
+  NotificationSettings: undefined;
+  Preferences: undefined;
+  BountyDetail: { bountyId: string };
+  EmailVerification: { token?: string };
+  PaymentComplete: { paymentId?: string; status?: string };
 };
 
 export type MainTabParamList = {
@@ -25,6 +92,56 @@ export type MainTabParamList = {
   Profile: undefined;
   Settings: undefined;
 };
+
+// ─── Settings Stack Param List ────────────────────────────────────────────────
+
+export type SettingsStackParamList = {
+  Settings: undefined;
+  LanguageSettings: undefined;
+  ThemeSettings: undefined;
+  NotificationSettings: undefined;
+  Preferences: undefined;
+};
+
+// ─── Home Screen ──────────────────────────────────────────────────────────────
+
+export interface PortfolioSummary {
+  id: string;
+  title: string;
+  subtitle: string;
+  creator: string;
+  value: string;
+  followers: number;
+  change: number;
+  tags: string[];
+}
+
+export interface MetricCard {
+  id: string;
+  label: string;
+  value: number;
+  previousValue: number;
+  unit: string;
+  trend: 'up' | 'down' | 'flat';
+  trendPct: number;
+}
+
+export interface ProjectBountyItem {
+  id: string;
+  kind: 'project' | 'bounty';
+  title: string;
+  subtitle: string;
+  reward: string;
+  due: string;
+  status: string;
+  tags: string[];
+}
+
+export interface HomeData {
+  trendingPortfolios: PortfolioSummary[];
+  quickMetrics: MetricCard[];
+  projectBountyItems: ProjectBountyItem[];
+}
 
 // ─── Canvas / Collaboration ───────────────────────────────────────────────────
 
@@ -89,6 +206,25 @@ export interface SessionRecord {
   lastUsed: number;
 }
 
+// ─── Sealed Sender ────────────────────────────────────────────────────────────
+
+export interface SealedSenderMessage {
+  id: string;
+  envelope: Uint8Array;
+  signature: Uint8Array;
+  messageType: 1 | 3;
+  timestamp: number;
+}
+
+// ─── Delivery Receipts ───────────────────────────────────────────────────────
+
+export interface DeliveryReceipt {
+  messageId: string;
+  recipientId: string;
+  status: 'delivered' | 'read';
+  timestamp: number;
+}
+
 // ─── Upscaling ────────────────────────────────────────────────────────────────
 
 export interface UpscaleOptions {
@@ -145,3 +281,155 @@ export interface FocusSession {
   durationSeconds: number;
   completedAt: string; // ISO 8601
 }
+
+// ─── Offline / Network ────────────────────────────────────────────────────────
+
+export type NetworkState = 'unknown' | 'online' | 'offline';
+export type SyncStatus = 'synced' | 'syncing' | 'error';
+
+export interface QueuedOperation {
+  id: string;
+  type: 'create' | 'update' | 'delete';
+  endpoint: string;
+  payload?: Record<string, unknown>;
+  retries: number;
+  createdAt: string;
+  /** Epoch ms — op is not retried until Date.now() >= nextRetryAt */
+  nextRetryAt: number;
+  /**
+   * Field names the local payload actually changed, used by `merge`-strategy
+   * conflict resolution (see `offline/ConflictResolution.ts`) to decide which
+   * fields the local write should keep when the server returns a conflicting
+   * version. Omit to merge every field present in `payload`.
+   */
+  changedFields?: readonly string[];
+  /**
+   * ISO timestamp the local write was made at, used by `last-write-wins`
+   * conflict resolution to compare against the server's `updatedAt`. Falls
+   * back to a top-level `updatedAt` in `payload` when not set.
+   */
+  localUpdatedAt?: string;
+}
+
+// ─── Multi-Sig Approval ───────────────────────────────────────────────────────
+
+export type MultiSigSignerStatus = 'pending' | 'approved';
+
+export interface MultiSigSigner {
+  id: string;
+  name: string;
+  role: 'Initiator' | 'Approver';
+  status: MultiSigSignerStatus;
+}
+
+export interface MultiSigTask {
+  id: string;
+  title: string;
+  amount: string;
+  description: string;
+  status: 'pending' | 'approved';
+  signers: MultiSigSigner[];
+  /** Signer IDs currently mid-way through a biometric confirmation prompt. */
+  queuedApprovals: string[];
+}
+
+export interface MultiSigState {
+  tasks: MultiSigTask[];
+  /**
+   * Prompts `signerId` for a real biometric confirmation and only flips
+   * their status to 'approved' on success. Throws if the confirmation
+   * fails or is cancelled — callers must not assume approval succeeded.
+   */
+  queueApproval: (taskId: string, signerId: string) => Promise<void>;
+  approveSigner: (taskId: string, signerId: string) => void;
+}
+
+// ─── Share Payload Types ───────────────────────────────────────────────────────
+
+export type ShareContentType = 'profile' | 'bounty' | 'review' | 'achievement' | 'portfolio' | 'link';
+
+export interface SharePayload {
+  type: ShareContentType;
+  title: string;
+  message?: string;
+  url: string;
+  imageUrl?: string;
+  tags?: string[];
+  metadata?: Record<string, string | number | boolean>;
+}
+
+export interface ShareOptions {
+  dismissable?: boolean;
+  showPreview?: boolean;
+  showOptions?: boolean;
+  defaultAction?: 'share' | 'copy';
+  onShare?: (contentType: ShareContentType, url: string) => void;
+  onCancel?: () => void;
+}
+
+// ─── Share Endpoint Types ──────────────────────────────────────────────────────
+
+export interface ShareEndpoint {
+  id: string;
+  name: string;
+  icon: string;
+  type: 'native' | 'web' | 'social' | 'messaging' | 'email';
+  supportedContentTypes: ShareContentType[];
+  share: (payload: SharePayload) => Promise<void>;
+  canShare: (payload: SharePayload) => boolean;
+}
+
+export interface SharedContent {
+  type: ShareContentType;
+  title: string;
+  description: string;
+  url: string;
+  imageUrl?: string;
+  tags?: string[];
+}
+
+// ─── Activity Types ────────────────────────────────────────────────────────────
+
+export type ActivityEventType =
+  | 'bounty_posted'
+  | 'bounty_applied'
+  | 'bounty_accepted'
+  | 'bounty_rejected'
+  | 'bounty_completed'
+  | 'review_received'
+  | 'review_left'
+  | 'payment_received'
+  | 'payment_sent'
+  | 'message_received'
+  | 'profile_viewed'
+  | 'match_found'
+  | 'dispute_opened'
+  | 'dispute_resolved';
+
+export interface ActivityEvent {
+  id: string;
+  type: ActivityEventType;
+  title: string;
+  subtitle?: string;
+  amount?: number;
+  relatedId?: string;
+  relatedName?: string;
+  avatarUrl?: string;
+  read: boolean;
+  createdAt: string; // ISO 8601
+}
+
+export interface ActivitySummary {
+  totalEvents: number;
+  unreadCount: number;
+  weeklyEarnings: number;
+  weeklyBounties: number;
+}
+
+export type ActivityFilterType =
+  | 'all'
+  | 'bounties'
+  | 'reviews'
+  | 'payments'
+  | 'messages'
+  | 'applications';

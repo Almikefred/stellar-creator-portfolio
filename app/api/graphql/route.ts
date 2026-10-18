@@ -1,18 +1,25 @@
-import { graphql, buildSchema, GraphQLSchema } from 'graphql';
+import {
+  graphql,
+  isObjectType,
+  type GraphQLFieldResolver,
+  type GraphQLSchema,
+} from 'graphql';
 import { NextRequest, NextResponse } from 'next/server';
-import { typeDefs } from '@/backend/src/graphql/schema';
-import { resolvers } from '@/backend/src/graphql/resolvers';
-import { createGraphQLContext } from '@/backend/src/graphql/context';
-import { checkRateLimit, RateLimitError } from '@/backend/src/graphql/rate-limit';
+import { typeDefs } from '@/server/graphql/schema';
+import { resolvers } from '@/server/graphql/resolvers';
+import { createGraphQLContext } from '@/server/graphql/context';
+import { checkRateLimit, RateLimitError } from '@/server/graphql/rate-limit';
 
 let schema: GraphQLSchema;
 
 function getSchema() {
   if (!schema) {
-    const baseSchema = buildSchema(typeDefs);
+    // typeDefs is already a built GraphQLSchema (see graphql/schema.ts).
+    const baseSchema = typeDefs;
 
     // Attach resolvers to the schema
-    Object.keys(resolvers).forEach(typeName => {
+    const resolverMap = resolvers as Record<string, Record<string, GraphQLFieldResolver<unknown, unknown>>>;
+    for (const [typeName, fieldResolvers] of Object.entries(resolverMap)) {
       const type =
         typeName === 'Query'
           ? baseSchema.getQueryType()
@@ -20,15 +27,15 @@ function getSchema() {
             ? baseSchema.getMutationType()
             : baseSchema.getType(typeName);
 
-      if (!type || !('_fields' in type)) return;
+      if (!isObjectType(type)) continue;
 
-      Object.keys((resolvers as any)[typeName]).forEach(fieldName => {
-        const field = (type._fields as any)[fieldName];
-        if (field) {
-          field.resolve = (resolvers as any)[typeName][fieldName];
+      const fields = type.getFields();
+      for (const [fieldName, resolve] of Object.entries(fieldResolvers)) {
+        if (fields[fieldName]) {
+          fields[fieldName].resolve = resolve;
         }
-      });
-    });
+      }
+    }
 
     schema = baseSchema;
   }
@@ -43,18 +50,18 @@ async function handleGraphQLRequest(req: NextRequest) {
   try {
     const ctx = await createGraphQLContext(req);
 
-    // Check rate limit
-    if (ctx.apiKeyId) {
-      try {
-        await checkRateLimit(ctx);
-      } catch (error) {
-        if (error instanceof RateLimitError) {
-          return NextResponse.json(
-            { errors: [{ message: error.message }] },
-            { status: 429, headers: { 'Retry-After': String(error.retryAfter) } }
-          );
-        }
+    // Enforce the rate limit decided while building the context
+    let remaining: number;
+    try {
+      remaining = checkRateLimit(ctx).remaining;
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        return NextResponse.json(
+          { errors: [{ message: error.message }] },
+          { status: 429, headers: { 'Retry-After': String(error.retryAfter) } }
+        );
       }
+      throw error;
     }
 
     const { query, variables, operationName } =
@@ -72,10 +79,9 @@ async function handleGraphQLRequest(req: NextRequest) {
 
     const statusCode = result.errors ? 400 : 200;
 
-    // Add rate limit headers
     const headers: Record<string, string> = {};
-    if (ctx.apiKeyId) {
-      headers['X-RateLimit-Limit'] = '100';
+    if (Number.isFinite(remaining)) {
+      headers['X-RateLimit-Remaining'] = String(remaining);
       headers['X-RateLimit-Window'] = '60';
     }
 

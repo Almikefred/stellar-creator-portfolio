@@ -5,6 +5,7 @@
 
 import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 /**
  * API Key Authentication
@@ -24,6 +25,11 @@ export interface AuthenticatedRequest extends Request {
   apiKey?: ApiKey;
   user?: { id: string; email: string };
   requestId?: string;
+}
+
+export interface JwtUserPayload extends jwt.JwtPayload {
+  id?: string;
+  email?: string;
 }
 
 /**
@@ -61,14 +67,16 @@ export class ApiKeyManager {
   }
 
   /**
-   * Hash secret for storage
+   * Hash secret for storage using scrypt KDF
    */
-  private hashSecret(secret: string): string {
-    return crypto.createHash("sha256").update(secret).digest("hex");
+  private hashSecret(secret: string, salt?: Buffer): string {
+    const secretSalt = salt || crypto.randomBytes(16);
+    const hash = crypto.scryptSync(secret, secretSalt, 32);
+    return secretSalt.toString("hex") + ":" + hash.toString("hex");
   }
 
   /**
-   * Verify API key and secret
+   * Verify API key and secret using constant-time comparison
    */
   public verify(key: string, secret: string): ApiKey | null {
     const apiKey = this.keys.get(key);
@@ -82,8 +90,19 @@ export class ApiKeyManager {
       return null;
     }
 
-    const hashedSecret = this.hashSecret(secret);
-    if (hashedSecret !== apiKey.secret) {
+    const [storedSalt, storedHash] = apiKey.secret.split(":");
+    if (!storedSalt || !storedHash) {
+      return null;
+    }
+
+    const hashedSecret = this.hashSecret(secret, Buffer.from(storedSalt, "hex"));
+    const [, computedHash] = hashedSecret.split(":");
+
+    try {
+      if (!crypto.timingSafeEqual(Buffer.from(computedHash), Buffer.from(storedHash))) {
+        return null;
+      }
+    } catch {
       return null;
     }
 
@@ -142,10 +161,21 @@ export function apiKeyAuthentication(
   }
 
   if (authHeader.startsWith("Bearer ")) {
-    // JWT token handling can be added here
     const token = authHeader.substring(7);
     try {
-      // Validate JWT token
+      const jwtSecret = process.env.JWT_SECRET || "your-secret-key";
+      const decoded = jwt.verify(token, jwtSecret) as JwtUserPayload | string;
+
+      if (
+        !decoded ||
+        typeof decoded === "string" ||
+        typeof decoded.id !== "string" ||
+        typeof decoded.email !== "string"
+      ) {
+        return res.status(401).json({ error: "Invalid token claims" });
+      }
+
+      req.user = { id: decoded.id, email: decoded.email };
       req.requestId = crypto.randomUUID();
       return next();
     } catch (error) {
@@ -168,8 +198,9 @@ export interface ValidationSchema {
     min?: number;
     max?: number;
     pattern?: RegExp;
-    enum?: any[];
-    items?: ValidationSchema;
+    enum?: (string | number | boolean)[];
+    /** Rule applied to every element of an array field. */
+    items?: ValidationSchema[string];
     properties?: ValidationSchema;
   };
 }
@@ -238,10 +269,14 @@ export class InputValidator {
    * Validate input against schema
    */
   static validate(
-    data: any,
+    data: Record<string, unknown> | null | undefined,
     schema: ValidationSchema,
   ): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
+
+    if (!data || typeof data !== "object") {
+      return { valid: false, errors: ["Input data must be an object"] };
+    }
 
     for (const [field, rules] of Object.entries(schema)) {
       const value = data[field];
@@ -256,14 +291,16 @@ export class InputValidator {
         continue;
       }
 
-      // Check type
-      if (typeof value !== rules.type) {
+      // Check type. typeof reports arrays as "object", so arrays are
+      // classified separately; otherwise every "array" field failed here.
+      const actualType = Array.isArray(value) ? "array" : typeof value;
+      if (actualType !== rules.type) {
         errors.push(`${field} must be of type ${rules.type}`);
         continue;
       }
 
       // Validate string
-      if (rules.type === "string") {
+      if (rules.type === "string" && typeof value === "string") {
         if (rules.minLength && value.length < rules.minLength) {
           errors.push(
             `${field} must have at least ${rules.minLength} characters`,
@@ -283,7 +320,7 @@ export class InputValidator {
       }
 
       // Validate number
-      if (rules.type === "number") {
+      if (rules.type === "number" && typeof value === "number") {
         if (rules.min !== undefined && value < rules.min) {
           errors.push(`${field} must be at least ${rules.min}`);
         }
@@ -294,7 +331,7 @@ export class InputValidator {
 
       // Validate array
       if (rules.type === "array" && Array.isArray(value)) {
-        if (rules.items && rules.items && typeof rules.items === "object") {
+        if (rules.items && typeof rules.items === "object") {
           for (const item of value) {
             const itemResult = this.validate({ item }, { item: rules.items });
             if (!itemResult.valid) {
@@ -320,6 +357,7 @@ export function validateInput(schema: ValidationSchema) {
         req.query[key] = InputValidator.sanitizeString(
           req.query[key] as string,
         );
+        req.query[key] = InputValidator.sanitizeHtml(req.query[key] as string);
       }
     }
 
@@ -328,6 +366,7 @@ export function validateInput(schema: ValidationSchema) {
       for (const key in req.body) {
         if (typeof req.body[key] === "string") {
           req.body[key] = InputValidator.sanitizeString(req.body[key]);
+          req.body[key] = InputValidator.sanitizeHtml(req.body[key]);
         }
       }
     }

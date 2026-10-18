@@ -1,3 +1,7 @@
+# CI workflow: nightly-tier-upgrade
+# Purpose: Nightly job that promotes eligible creators to higher tiers based
+# on activity thresholds. Runs via workflow_dispatch and a nightly cron
+# schedule; results are posted to Slack.
 name: Nightly Tier Upgrade
 
 on:
@@ -17,13 +21,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -43,12 +47,23 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: 832,
-              body: '⚠️ Nightly tier upgrade failed. Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
-            })
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [[ -z "$SLACK_WEBHOOK_URL" ]]; then
+            echo "⚠️ SLACK_WEBHOOK_URL not set, skipping notification"
+            exit 0
+          fi
+          curl -fsSL -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "❌ *Nightly Tier Upgrade Failed*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  {"title": "Workflow", "value": "Nightly Tier Upgrade", "short": true},
+                  {"title": "Status", "value": "Failed", "short": true},
+                  {"title": "Run", "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>", "short": false}
+                ]
+              }]
+            }'

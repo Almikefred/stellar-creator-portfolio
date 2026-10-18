@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { buildOptimizationProps, buildSizes } from '@/lib/utils/image-utils';
 import { VerificationBadge, BadgeRow } from '@/components/widgets/verification-badge';
+import { useOptionalComparison } from '@/components/compare/comparison-context';
 
 interface CreatorCardProps {
   creator: Creator;
@@ -14,6 +15,11 @@ interface CreatorCardProps {
 
 export function CreatorCard({ creator }: CreatorCardProps) {
   const router = useRouter();
+  const comparison = useOptionalComparison();
+  const isCompared = comparison?.isSelected(creator.id) ?? false;
+  // Comparison holds a limited number of creators; once full, only
+  // already-selected cards can be toggled (to remove them).
+  const compareDisabled = !comparison || (!isCompared && !comparison.canAddMore());
   const coverSizes = buildSizes({
     mobile: '100vw',
     tablet: '50vw',
@@ -22,8 +28,8 @@ export function CreatorCard({ creator }: CreatorCardProps) {
   });
 
   const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Don't navigate if clicking on anchors or buttons
-    if ((e.target as HTMLElement).closest('a, button')) {
+    // Don't navigate if clicking on a nested control
+    if ((e.target as HTMLElement).closest('a, button, input, label')) {
       return;
     }
     router.push(`/creators/${creator.id}`);
@@ -47,6 +53,19 @@ export function CreatorCard({ creator }: CreatorCardProps) {
             placeholder="empty"
           />
         )}
+        <label className="absolute top-3 right-3 z-10 flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            aria-label={`Compare ${creator.name}`}
+            checked={isCompared}
+            disabled={compareDisabled}
+            onChange={(e) =>
+              e.target.checked ? comparison?.addCreator(creator) : comparison?.removeCreator(creator.id)
+            }
+          />
+          Compare
+        </label>
       </div>
 
       {/* Content */}
@@ -127,8 +146,10 @@ export function CreatorCard({ creator }: CreatorCardProps) {
 
         {/* CTA Button */}
         <Button
-          className="w-full group/btn"
+          className="w-full group/btn focus-visible:ring-2"
           variant="default"
+          tabIndex={0}
+          aria-label={`View ${creator.name}'s portfolio`}
           onClick={() => router.push(`/creators/${creator.id}`)}
         >
           View Portfolio

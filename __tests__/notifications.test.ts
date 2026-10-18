@@ -7,15 +7,15 @@ vi.setConfig({ testTimeout: 30000 });
  * Unit tests, integration tests, and performance tests
  */
 
-import { PushNotificationService } from '@/backend/services/notifications/push-service';
+import { PushNotificationService } from '@/server/services/notifications/push-service';
 import {
   validateNotificationPayload,
   sanitizeContent,
   generateMessageId,
   calculateRetryDelay,
   DEFAULT_RETRY_CONFIG,
-} from '@/backend/services/notifications/notification-validators';
-import { NotificationChannel, UserPreferences } from '@/backend/services/notifications/notification-types';
+} from '@/server/services/notifications/notification-validators';
+import { NotificationChannel } from '@/server/services/notifications/notification-types';
 
 describe('PushNotificationService', () => {
   let service: PushNotificationService;
@@ -169,6 +169,11 @@ describe('PushNotificationService', () => {
           updatedAt: new Date(),
         },
       }));
+
+      // 150 batches would otherwise spend ~15s in the inter-batch pause,
+      // which is what this test is not about.
+      vi.spyOn(service as unknown as { delay: (ms: number) => Promise<void> }, 'delay')
+        .mockResolvedValue(undefined);
 
       // Should process large batches
       const results = await service.sendBatch(notifications);

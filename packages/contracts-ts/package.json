@@ -9,9 +9,11 @@
     "./bounty": "./src/bounty/index.ts",
     "./escrow": "./src/escrow/index.ts",
     "./freelancer": "./src/freelancer/index.ts",
-    "./governance": "./src/governance/index.ts"
+    "./governance": "./src/governance/index.ts",
+    "./identity": "./src/identity/index.ts",
+    "./oracle": "./src/oracle/index.ts"
   },
   "peerDependencies": {
-    "@stellar/stellar-sdk": "17.2.1"
+    "@stellar/stellar-sdk": "^16.2.0"
   }
 }

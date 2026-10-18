@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { errorTracker, type ErrorReport } from '@/lib/error-tracking';
+import { errorTracker } from '@/lib/error-tracking';
 
 describe('Error Tracking', () => {
   beforeEach(() => {
@@ -46,7 +46,7 @@ describe('Error Tracking', () => {
       expect(report.context.sessionId).toBeDefined();
     });
 
-    it('should handle string errors', () => {
+    it('should handle string errors', async () => {
       const report = (errorTracker as any).buildErrorReport('String error', {});
       expect(report.message).toBe('String error');
       expect(report.level).toBe('error');
@@ -140,8 +140,8 @@ describe('Error Tracking', () => {
 });
 
 describe('Error Handling Integration', () => {
-  it('should format API errors with context', () => {
-    const { formatApiError } = require('@/lib/error-handling');
+  it('should format API errors with context', async () => {
+    const { formatApiError } = await import('@/lib/error-handling');
 
     const error = {
       code: 'VALIDATION_ERROR',
@@ -158,8 +158,8 @@ describe('Error Handling Integration', () => {
     expect(formatted.fieldErrors.email).toBe('Invalid email');
   });
 
-  it('should handle string errors', () => {
-    const { formatApiError } = require('@/lib/error-handling');
+  it('should handle string errors', async () => {
+    const { formatApiError } = await import('@/lib/error-handling');
 
     const formatted = formatApiError('String error');
 
@@ -170,7 +170,7 @@ describe('Error Handling Integration', () => {
 
 describe('API Tracking Wrapper', () => {
   it('should wrap fetch calls', async () => {
-    const { fetchWithTracking } = require('@/lib/api-with-tracking');
+    const { fetchWithTracking } = await import('@/lib/api-with-tracking');
 
     // Mock fetch
     global.fetch = vi.fn(() =>
@@ -194,7 +194,7 @@ describe('API Tracking Wrapper', () => {
   });
 
   it('should handle fetch errors', async () => {
-    const { fetchWithTracking } = require('@/lib/api-with-tracking');
+    const { fetchWithTracking } = await import('@/lib/api-with-tracking');
 
     global.fetch = vi.fn(() =>
       Promise.reject(new Error('Network error'))
@@ -208,17 +208,16 @@ describe('API Tracking Wrapper', () => {
   });
 
   it('should handle fetch timeouts', async () => {
-    const { fetchWithTracking } = require('@/lib/api-with-tracking');
+    const { fetchWithTracking } = await import('@/lib/api-with-tracking');
 
+    // A request that never completes on its own; like the real fetch, it
+    // rejects once the caller's AbortSignal fires.
     global.fetch = vi.fn(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              ok: true,
-              json: () => Promise.resolve({ data: 'test' }),
-            });
-          }, 5000);
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
         })
     );
 
@@ -232,13 +231,13 @@ describe('API Tracking Wrapper', () => {
 });
 
 describe('Error Tracking Hooks', () => {
-  it('should export useErrorTracking hooks', () => {
+  it('should export useErrorTracking hooks', async () => {
     const {
       useInitializeErrorTracking,
       useSetErrorTrackingUser,
       useCaptureError,
       useAddBreadcrumb,
-    } = require('@/hooks/useErrorTracking');
+    } = await import('@/hooks/useErrorTracking');
 
     expect(typeof useInitializeErrorTracking).toBe('function');
     expect(typeof useSetErrorTrackingUser).toBe('function');

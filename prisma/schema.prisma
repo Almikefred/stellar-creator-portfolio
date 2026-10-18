@@ -6,8 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // DIRECT_DATABASE_URL bypasses PgBouncer for Prisma migrations.
+  // In production set this to the direct Postgres connection (port 5432).
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 // NextAuth.js required models
@@ -49,7 +52,20 @@ model User {
   password            String?
   image               String?
   role                Role      @default(USER)
-  onboardingComplete  Boolean   @default(false)
+  /// Current step (1-3) in the onboarding wizard; used to resume where a
+  /// user left off. Set alongside onboardingData by app/api/onboarding.
+  onboardingStep      Int       @default(1)
+  /// Partial per-step form data collected before final submit.
+  onboardingData      Json?
+  /// Null until the wizard's final step completes. Presence (not a
+  /// separate boolean) is what middleware/NextAuth's jwt callback gate on.
+  onboardingCompletedAt DateTime?
+  /// Stellar public key (G...), set once a wallet has been linked via SEP-10.
+  /// Required to attest KYC on-chain (Issue #782).
+  walletAddress       String?   @unique
+  /// Set while an admin suspension is in force; null for active accounts.
+  suspendedAt         DateTime? @db.Timestamptz
+  suspensionReason    String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   
@@ -72,11 +88,21 @@ model User {
   matchFeedback       MatchFeedback[]
   matchNotifications  MatchNotification[]
   auditLogs           AuditLog[]
+  adminSkills         AdminSkill[]
+  skillSynonyms       SkillSynonym[]
   bountyTemplates     BountyTemplate[]
   apiKeys             ApiKey[]
   endorsementsGiven   Endorsement[] @relation(name: "endorsements_given")
+  kycSubmission       KYCSubmission?
+  testimonials        Testimonial[] @relation("testimonial_creator")
+  clientTestimonials  Testimonial[] @relation("testimonial_client")
+  projects            Project[]
+  teamsOwned          Team[]        @relation("team_owner")
+  teamMemberships     TeamMember[]
+  disputeEvidence     DisputeEvidence[] @relation("dispute_evidence_uploader")
 
   @@index([email])
+  @@index([suspendedAt])
 }
 
 model VerificationToken {
@@ -128,6 +154,16 @@ model CreatorProfile {
   figmaUrl          String?
   linkedinUrl       String?
   websiteUrl        String?
+  /// Whether this creator is currently open to new bounty applications.
+  /// Matching (see lib/matching-engine.ts) excludes creators where this is
+  /// false, regardless of how well they'd otherwise score.
+  acceptingWork     Boolean          @default(true)
+  /// Rate card (issue #1609) — all optional since existing creators have
+  /// none set; matching falls back to its completedProjects-based budget
+  /// heuristic when neither rate field is present.
+  hourlyRate        Float?
+  projectRateMin    Float?
+  projectRateMax    Float?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -138,6 +174,7 @@ model CreatorProfile {
   @@index([userId])
   @@index([discipline])
   @@index([verificationTier])
+  @@index([acceptingWork])
 }
 
 /// Immutable audit trail of tier changes
@@ -153,6 +190,38 @@ model TierHistory {
 
   @@index([creatorProfileId, createdAt])
   @@index([newTier])
+}
+
+/// A creator's recurring weekly availability window (e.g. "Mon 9am-5pm UTC").
+model Availability {
+  id               String         @id @default(cuid())
+  creatorProfileId String
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+  /// 0 = Sunday .. 6 = Saturday
+  dayOfWeek        Int
+  startTime        String
+  endTime          String
+  timezone         String         @default("UTC")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([creatorProfileId])
+}
+
+/// A skill endorsement one user gives to a creator's profile.
+model Endorsement {
+  id               String         @id @default(cuid())
+  creatorProfileId String
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+  giverId          String
+  giver            User           @relation(name: "endorsements_given", fields: [giverId], references: [id], onDelete: Cascade)
+  skill            String
+  message          String?
+  createdAt        DateTime       @default(now())
+
+  @@unique([creatorProfileId, giverId, skill])
+  @@index([creatorProfileId])
+  @@index([giverId])
 }
 
 model ClientProfile {
@@ -203,14 +272,27 @@ model Bounty {
   status      BountyStatus @default(OPEN)
   category    String?
   tags        String[]
+  /// Skill level required: beginner | intermediate | advanced | expert
+  difficulty  BountyDifficulty @default(beginner)
   applications BountyApplication[]
+  testimonials Testimonial[]
+  reviews      Review[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([creatorId])
   @@index([status])
   @@index([category])
+  @@index([difficulty])
 }
+
+enum BountyDifficulty {
+  beginner
+  intermediate
+  advanced
+  expert
+}
+
 
 enum BountyStatus {
   OPEN
@@ -229,12 +311,19 @@ model BountyApplication {
   proposedBudget Int
   timeline       Int      // days
   status         ApplicationStatus @default(PENDING)
+  /// Set when this is a team/agency application (issue #1610) — `applicant`
+  /// is then the team's primary contact, and payout on acceptance should
+  /// split across `team.members` per their `payoutSplitPercent`. Null for
+  /// an ordinary solo application.
+  teamId         String?
+  team           Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@unique([bountyId, applicantId])
   @@index([bountyId])
   @@index([applicantId])
+  @@index([teamId])
   @@index([status])
 }
 
@@ -243,6 +332,52 @@ enum ApplicationStatus {
   ACCEPTED
   REJECTED
   WITHDRAWN
+}
+
+// ── Teams / agencies (issue #1610) ────────────────────────────────────────
+//
+// A team lets several creators apply to a bounty together with an agreed
+// payout split. This PR implements the team model and team-application
+// flow (app/api/teams/route.ts, app/api/bounties/[id]/apply/route.ts).
+//
+// Deferred to a follow-up, per this issue's own "L — consider splitting
+// into several PRs" sizing: enforcing the split when escrow actually pays
+// out. `lib/escrow/escrow-transaction-handler.ts`'s `releaseEscrowFunds`
+// credits a single `creatorId` and has no link back to the `Bounty` /
+// `BountyApplication` it's for at all (neither `Escrow` nor the functions
+// that call it take an application/bounty id) — that's a pre-existing gap
+// this PR did not introduce. Teaching it to split across
+// `TeamMember.payoutSplitPercent` needs that link added first, which is
+// its own scoped change distinct from the team model itself.
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User     @relation("team_owner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members      TeamMember[]
+  applications BountyApplication[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+model TeamMember {
+  id                 String   @id @default(cuid())
+  teamId             String
+  team               Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Share of the bounty payout this member receives on release (0-100).
+  /// A team's members must sum to exactly 100 — enforced in
+  /// app/api/teams/route.ts; Prisma/Postgres has no built-in cross-row
+  /// CHECK for that here.
+  payoutSplitPercent Int
+  createdAt          DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
 }
 
 model Review {
@@ -257,9 +392,16 @@ model Review {
   helpfulCount      Int          @default(0)
   notHelpfulCount   Int          @default(0)
   status            ReviewStatus @default(PENDING)
+  /// The completed bounty this review is about (issue #1608) — required by
+  /// new reviews (enforced in app/api/creators/reviews/route.ts, not here,
+  /// since existing rows predate this column and have none). Also used to
+  /// prevent more than one review per reviewer per engagement.
+  bountyId          String?
+  bounty            Bounty?      @relation(fields: [bountyId], references: [id], onDelete: SetNull)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
+  @@unique([reviewerId, bountyId])
   @@index([creatorId])
   @@index([reviewerId])
   @@index([status])
@@ -279,6 +421,27 @@ enum ReviewStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+// Mobile Expo push token registered by a signed-in user, so server-side
+// push can target them. Registered after sign-in and re-registered on
+// token refresh (see mobile/src/services/PushNotificationService.ts
+// registerPushTokenWithBackend). One row per (userId, token): the same
+// physical device can get a new Expo token across reinstalls, and the
+// same token should not be duplicated for a user across repeated
+// registration calls (app foreground, retry, etc.).
+model PushDeviceToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String
+  platform   String // 'ios' | 'android' | 'web'
+  lastUsedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
 }
 
 model Notification {
@@ -324,7 +487,21 @@ model NotificationPreference {
   emailMessages           Boolean  @default(true)
   emailMarketing          Boolean  @default(false)
   inAppEnabled            Boolean  @default(true)
+  /// Digest emails roll up unread in-app notifications instead of sending
+  /// one email per event. DAILY by default so new users get the lower-noise
+  /// behavior; NONE turns digests off entirely.
+  digestFrequency         DigestFrequency @default(DAILY)
+  /// Set after a digest email is queued for this user so the next run only
+  /// picks up notifications that arrived since, instead of re-sending the
+  /// same still-unread ones forever.
+  lastDigestSentAt        DateTime?
   updatedAt               DateTime @updatedAt
+}
+
+enum DigestFrequency {
+  NONE
+  DAILY
+  WEEKLY
 }
 
 model InAppNotification {
@@ -423,13 +600,12 @@ model Escrow {
 
 model Balance {
   id        String   @id @default(cuid())
-  userId    String
+  /// One balance row per user; escrow release/refund upserts on this key.
+  userId    String   @unique
   available Int      @default(0)
   locked    Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@index([userId])
 }
 
 model Transaction {
@@ -438,6 +614,8 @@ model Transaction {
   escrowId  String?
   type      String
   amount    Int
+  /// pending | completed | failed
+  status    String   @default("completed")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -453,6 +631,8 @@ model Dispute {
   clientId  String
   status    String   @default("open")
   reason    String?
+  deadline  DateTime?
+  evidence  DisputeEvidence[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -460,6 +640,26 @@ model Dispute {
   @@index([creatorId])
   @@index([clientId])
   @@index([status])
+  @@index([deadline])
+}
+
+model DisputeEvidence {
+  id           String   @id @default(cuid())
+  disputeId    String
+  dispute      Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   User     @relation("dispute_evidence_uploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  fileUrl      String?
+  fileName     String?
+  fileSize     Int?
+  mimeType     String?
+  message      String?  @db.Text
+  messageId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([disputeId])
+  @@index([uploadedById])
 }
 
 // ── Audit Logging & Telemetry ────────────────────────────────────────────
@@ -633,6 +833,55 @@ model FeatureFlagEvaluation {
   @@index([userId, createdAt])
 }
 
+// ── Skill Taxonomy Admin & Synonyms — Issue #1617 ─────────────────────────────
+
+/// An admin-added skill not present in the built-in taxonomy
+/// (`lib/skills-taxonomy.ts`'s `SKILLS_TAXONOMY`). `skillId` uses the same
+/// slug shape as the built-in entries (e.g. "zig", "move-lang") so
+/// `SkillSynonym.skillId` can reference either kind uniformly.
+model AdminSkill {
+  id          String   @id @default(cuid())
+  skillId     String   @unique
+  name        String
+  /// Mirrors `SkillCategory` in lib/skills-taxonomy.ts — kept as a plain
+  /// string (validated at the API boundary) rather than a Prisma enum so
+  /// the two don't need a migration kept in lockstep by hand.
+  category    String
+  aliases     String[] @default([])
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  synonyms SkillSynonym[]
+
+  @@index([skillId])
+  @@index([category])
+}
+
+/// Admin-added search synonym for a skill. `skillId` can point at either a
+/// built-in taxonomy id or an `AdminSkill.skillId` — resolved against both
+/// at query time (see `lib/skills-taxonomy-admin.ts`), not enforced by a DB
+/// foreign key, since built-ins aren't rows in this database.
+model SkillSynonym {
+  id      String @id @default(cuid())
+  skillId String
+
+  /// Set only when `skillId` references an `AdminSkill` — lets deleting an
+  /// admin-added skill cascade-delete its synonyms. Synonyms on a built-in
+  /// skill have this null and are deleted individually.
+  adminSkillId String?
+  adminSkill   AdminSkill? @relation(fields: [adminSkillId], references: [skillId], onDelete: Cascade)
+
+  synonym     String
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@unique([skillId, synonym])
+  @@index([skillId])
+}
+
 // ── Bounty Templates — Issue #810 ─────────────────────────────────────────────
 
 /// Seed/system-level bounty templates shown in the "Start from template" picker.
@@ -663,4 +912,117 @@ model ZKNullifier {
   createdAt DateTime @default(now())
 
   @@index([nullifier])
+}
+
+// ── Testimonials ──────────────────────────────────────────────────────────────
+
+model Testimonial {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      User     @relation("testimonial_client", fields: [clientId], references: [id], onDelete: Cascade)
+  creatorId   String
+  creator     User     @relation("testimonial_creator", fields: [creatorId], references: [id], onDelete: Cascade)
+  bountyId    String?
+  bounty      Bounty?  @relation(fields: [bountyId], references: [id], onDelete: SetNull)
+  author      String
+  role        String
+  quote       String   @db.Text
+  rating      Int      // 1-5
+  featured    Boolean  @default(false)
+  videoUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([creatorId])
+  @@index([bountyId])
+  @@index([featured])
+  @@index([createdAt])
+}
+
+// ── OCR-based KYC Document Verification — Issue #782 ────────────────────
+
+enum KYCDocumentType {
+  PASSPORT
+  DRIVER_LICENSE
+  NATIONAL_ID
+}
+
+enum KYCStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// A user's submitted KYC document and its review/verification lifecycle.
+/// Extracted PII fields are encrypted at rest (AWS KMS) and only ever
+/// decrypted for admin review; the row (and its ciphertext) is deleted by
+/// the expiry cleanup job 90 days after upload for GDPR compliance.
+model KYCSubmission {
+  id             String          @id @default(cuid())
+  userId         String          @unique
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Document metadata
+  documentType   KYCDocumentType
+  uploadedAt     DateTime        @default(now())
+  /// Set by application code at creation time to uploadedAt + 90 days.
+  expiresAt      DateTime
+
+  // Extracted data, encrypted at rest with AWS KMS before storage.
+  encryptedName     String
+  encryptedDOB      String
+  encryptedIdNumber String
+
+  // Verification flow
+  status          KYCStatus @default(PENDING)
+  adminReviewedBy String?
+  adminReviewedAt DateTime?
+  rejectionReason String?
+
+  // On-chain verification (backend/contracts/identity `verify_kyc`)
+  verifiedOnChain Boolean @default(false)
+  txHash          String? @unique
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+/// Portfolio project. `description` holds sanitized rich-text HTML produced by
+/// the TipTap editor (see lib/rich-text/sanitize.ts); it is sanitized again on
+/// the server before every write.
+model Project {
+  id          String   @id @default(cuid())
+  creatorId   String
+  creator     User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  title       String
+  category    String
+  description String   @db.Text
+  tags        String[]
+  year        Int
+  link        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([creatorId])
+  @@index([category])
+}
+
+/// Cross-border payment corridor analytics for Stellar PathPayment
+/// operations, aggregated into 5-minute period buckets.
+model CorridorPayment {
+  id               String   @id @default(cuid())
+  sourceCurrency   String
+  destCurrency     String
+  volume           BigInt
+  transactionCount Int
+  periodBucket     DateTime
+  createdAt        DateTime @default(now())
+
+  @@unique([sourceCurrency, destCurrency, periodBucket])
+  @@index([sourceCurrency])
+  @@index([destCurrency])
+  @@index([periodBucket])
+  @@index([sourceCurrency, destCurrency])
 }

@@ -1,9 +1,9 @@
-import { Header } from '@/components/header'
-import { Footer } from '@/components/footer'
-import { EarningsDashboard } from '@/components/earnings-dashboard'
+import { Header } from '@/components/layout/header'
+import { Footer } from '@/components/layout/footer'
+import { EarningsDashboard } from '@/components/analytics/earnings-dashboard'
 
 export const metadata = {
-  title: 'Earnings | Stellar Creator Portfolio',
+  title: 'Earnings | Tamgora',
   description: 'Track your freelance earnings and export tax documents.',
 }
 

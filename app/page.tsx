@@ -1,19 +1,21 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Header } from '@/components/header';
-import { Footer } from '@/components/footer';
-import { CreatorCard } from '@/components/creator-card';
+import { Header } from '@/components/layout/header';
+import { Footer } from '@/components/layout/footer';
+import { CreatorCard } from '@/components/cards/creator-card';
 import { Button } from '@/components/ui/button';
 import { ArrowRight, Sparkles, Users, Target } from 'lucide-react';
-import { creators } from '@/lib/creators-data';
-import { TestimonialsSection } from '@/components/testimonials';
-import { FeaturedBounties } from '@/components/featured-bounties';
-import { AnimatedCounter } from '@/components/animated-counter';
+import { trpc } from '@/lib/trpc-client';
+import { creators } from '@/lib/services/creators-data';
+import { TestimonialsSection } from '@/components/marketing/testimonials';
+import { FeaturedBounties } from '@/components/bounties/featured-bounties';
+import { AnimatedCounter } from '@/components/marketing/animated-counter';
+import { CardSkeletonGrid } from '@/components/skeletons/card-skeleton';
 
 export default function Home() {
   const router = useRouter();
-  const featuredCreators = creators.slice(0, 3);
+  const featuredQuery = trpc.creators.featured.useQuery({ limit: 3 });
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -25,7 +27,7 @@ export default function Home() {
           {/* Minimal Background - Professional Look */}
           <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent" />
 
-          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24 md:py-32 animate-fade-in">
+          <div className="relative page-container py-16 sm:py-24 md:py-32 animate-fade-in">
             <div className="text-center max-w-4xl mx-auto">
               {/* Subtitle Badge */}
               <p className="text-sm font-semibold text-primary mb-4 uppercase tracking-wide">
@@ -67,9 +69,9 @@ export default function Home() {
 
         {/* Stats Section */}
         <section className="py-12 sm:py-16 border-b border-border bg-muted/30">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="page-container">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
-              <AnimatedCounter value={creators.length} label="Stellar Creators" suffix="+" />
+              <AnimatedCounter value={creators.length} label="Tamgora Creators" suffix="+" />
               <AnimatedCounter value={creators.reduce((sum, c) => sum + c.projects.length, 0)} label="Incredible Projects" suffix="+" />
               <AnimatedCounter value={15} label="Non-Tech Disciplines" suffix="+" />
             </div>
@@ -81,7 +83,7 @@ export default function Home() {
 
         {/* Featured Creators Section */}
         <section className="py-16 sm:py-24">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="page-container">
             {/* Section Header */}
             <div className="text-center mb-12 sm:mb-16">
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-foreground mb-3 sm:mb-4">
@@ -93,14 +95,18 @@ export default function Home() {
             </div>
 
             {/* Creators Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-              {featuredCreators.map((creator) => (
-                <CreatorCard key={creator.id} creator={creator} />
-              ))}
-            </div>
+            {featuredQuery.isLoading ? (
+              <CardSkeletonGrid count={3} />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+                {(featuredQuery.data ?? []).map((creator) => (
+                  <CreatorCard key={creator.id} creator={creator as any} />
+                ))}
+              </div>
+            )}
 
             {/* View All CTA */}
-            <div className="text-center">
+            <div className="text-center mt-12">
               <Button size="lg" variant="outline" className="group" onClick={() => router.push('/creators')}>
                 View All Creators
                 <ArrowRight size={18} className="ml-2 group-hover:translate-x-1 transition-transform" />
@@ -114,10 +120,10 @@ export default function Home() {
 
         {/* Features Section */}
         <section className="py-16 sm:py-24 bg-muted/30 border-b border-border">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="page-container">
             <div className="text-center mb-12 sm:mb-16">
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-foreground mb-3">
-                Why Choose Stellar?
+                Why Choose Tamgora?
               </h2>
               <p className="text-muted-foreground max-w-2xl mx-auto">
                 The platform built for non-technical talent in tech
@@ -174,7 +180,7 @@ export default function Home() {
               Ready to Get Started?
             </h2>
             <p className="text-base sm:text-lg text-muted-foreground mb-8 sm:mb-10 max-w-2xl mx-auto">
-              Join thousands of creators and clients finding perfect matches on Stellar.
+              Join thousands of creators and clients finding perfect matches on Tamgora.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center items-center sm:items-stretch">
               <Button size="lg" className="w-full sm:w-auto" onClick={() => router.push('/creators')}>

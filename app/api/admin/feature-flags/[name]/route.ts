@@ -17,13 +17,22 @@ import {
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 
-async function requireAdmin(req: NextRequest) {
+/**
+ * Returns the authenticated admin's id on success, or a 403 response to
+ * return immediately. Callers need the admin's id to attribute the
+ * AuditLog entry written below (#1614) — who changed a feature flag, not
+ * just that it changed.
+ */
+async function requireAdmin(
+  req: NextRequest,
+): Promise<{ error: NextResponse; adminId?: undefined } | { error?: undefined; adminId: string }> {
   const session = await getServerSession(authOptions);
   const role = (session?.user as { role?: string })?.role;
-  if (!session || role !== 'ADMIN') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  const adminId = (session?.user as { id?: string })?.id;
+  if (!session || role !== 'ADMIN' || !adminId) {
+    return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
   }
-  return null;
+  return { adminId };
 }
 
 const patchSchema = z.object({
@@ -35,12 +44,13 @@ const patchSchema = z.object({
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { name: string } },
+  { params }: { params: Promise<{ name: string }> },
 ) {
   const auth = await requireAdmin(req);
-  if (auth) return auth;
+  if (auth.error) return auth.error;
 
-  const flag = await getFlagWithAnalytics(params.name);
+  const { name } = await params;
+  const flag = await getFlagWithAnalytics(name);
   if (!flag) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   return NextResponse.json(flag);
@@ -48,30 +58,94 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { name: string } },
+  { params }: { params: Promise<{ name: string }> },
 ) {
   const auth = await requireAdmin(req);
-  if (auth) return auth;
+  if (auth.error) return auth.error;
 
+  const { name } = await params;
   const body = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const flag = await upsertFlag({ name: params.name, ...parsed.data });
+  // Captured before the write so the audit entry records what actually
+  // changed, not just the requested patch (#1614) — e.g. a PATCH that only
+  // sends `{ enabled: true }` when the flag was already enabled shouldn't
+  // read back as a no-op change in the log.
+  const before = await prisma.featureFlag.findUnique({ where: { name } });
+
+  const flag = await upsertFlag({ name, ...parsed.data });
+
+  await prisma.auditLog.create({
+    data: {
+      userId: auth.adminId,
+      resource: 'feature_flag',
+      action: before ? 'update' : 'create',
+      resourceId: flag.id,
+      status: 'SUCCESS',
+      payload: {
+        name,
+        requested: parsed.data,
+        before: before
+          ? {
+              enabled: before.enabled,
+              rolloutPercent: before.rolloutPercent,
+              userSegment: before.userSegment,
+              description: before.description,
+            }
+          : null,
+        after: {
+          enabled: flag.enabled,
+          rolloutPercent: flag.rolloutPercent,
+          userSegment: flag.userSegment,
+          description: flag.description,
+        },
+      },
+      requestPath: req.nextUrl.pathname,
+      httpMethod: 'PATCH',
+    },
+  });
+
   return NextResponse.json(flag);
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { name: string } },
+  { params }: { params: Promise<{ name: string }> },
 ) {
   const auth = await requireAdmin(req);
-  if (auth) return auth;
+  if (auth.error) return auth.error;
 
-  await prisma.featureFlag.delete({ where: { name: params.name } });
-  await invalidateFlagCache(params.name);
+  const { name } = await params;
+
+  const deleted = await prisma.featureFlag.delete({ where: { name } }).catch(() => null);
+  if (!deleted) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  await invalidateFlagCache(name);
+
+  await prisma.auditLog.create({
+    data: {
+      userId: auth.adminId,
+      resource: 'feature_flag',
+      action: 'delete',
+      resourceId: deleted.id,
+      status: 'SUCCESS',
+      payload: {
+        name,
+        deleted: {
+          enabled: deleted.enabled,
+          rolloutPercent: deleted.rolloutPercent,
+          userSegment: deleted.userSegment,
+          description: deleted.description,
+        },
+      },
+      requestPath: req.nextUrl.pathname,
+      httpMethod: 'DELETE',
+    },
+  });
 
   return NextResponse.json({ deleted: true });
 }

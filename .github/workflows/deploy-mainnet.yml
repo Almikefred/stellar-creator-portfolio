@@ -1,5 +1,16 @@
+# CI workflow: deploy-mainnet
+# Purpose: Deploys Soroban contracts and the Next.js frontend to the Stellar
+# Mainnet when a GitHub release is published. Requires a valid semver tag
+# (v1.2.3), no pre-release suffix, and manual approval via the 'mainnet'
+# GitHub Environment. Simulates all contracts against both the primary and
+# secondary Mainnet RPC before any on-chain transaction is sent.
+# Caching: pnpm store (actions/setup-node cache:'pnpm').
 name: Deploy to Mainnet
 
+# Trigger: only on published releases (not drafts, not pre-releases unless the
+# tag is explicitly selected).  This enforces that merges to main do NOT
+# auto-deploy — a deliberate release action is always required.
+# Related: #1349
 on:
   release:
     types: [published]
@@ -7,6 +18,9 @@ on:
 env:
   STELLAR_NETWORK: mainnet
   MAINNET_RPC_URL: https://soroban-mainnet.stellar.org
+  # Secondary Mainnet RPC for pre-deploy simulation validation — if primary is
+  # degraded we still get an independent confirmation that contracts simulate.
+  MAINNET_RPC_URL_SECONDARY: https://mainnet.stellar.validationcloud.io/v1/soroban/rpc
   MAINNET_PASSPHRASE: "Public Global Stellar Network ; September 2015"
 
 jobs:
@@ -25,6 +39,18 @@ jobs:
           fi
           echo "✅ Release tag: $TAG"
 
+      - name: Reject pre-release / draft deployments
+        run: |
+          # The 'published' event type already excludes drafts, but we add an
+          # explicit guard against pre-release tags (e.g. v1.0.0-rc.1) being
+          # accidentally deployed to Mainnet.
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" =~ - ]]; then
+            echo "❌ Pre-release tag '$TAG' must not be deployed to Mainnet. Use a release tag."
+            exit 1
+          fi
+          echo "✅ Release tag is not a pre-release: $TAG"
+
   simulate-contracts:
     name: Simulate Contracts Against Mainnet RPC
     runs-on: ubuntu-latest
@@ -40,16 +66,57 @@ jobs:
           cargo install --locked stellar-cli --features opt 2>/dev/null || \
           cargo install stellar-cli --features opt
 
+      - name: Build contracts
+        run: cd backend && cargo build --release --target wasm32v1-none \
+          --package stellar-bounty-contract \
+          --package stellar-escrow-contract \
+          --package stellar-freelancer-contract \
+          --package stellar-governance-contract \
+          --package oracle \
+          --package stellar-identity-contract
+
       - name: Run contract unit tests
         run: cd backend && cargo test --all-features
 
-      - name: Simulate contracts against Mainnet RPC
+      - name: Validate primary Mainnet RPC is reachable
+        env:
+          MAINNET_RPC_URL: ${{ env.MAINNET_RPC_URL }}
+        run: |
+          echo "🔍 Checking primary Mainnet RPC health…"
+          RESPONSE=$(curl -fsSL --max-time 10 -X POST "$MAINNET_RPC_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":[]}')
+          echo "$RESPONSE" | grep -q '"result"' || { echo "❌ Primary RPC health check failed"; exit 1; }
+          echo "✅ Primary Mainnet RPC is healthy"
+
+      - name: Validate secondary Mainnet RPC is reachable
+        env:
+          MAINNET_RPC_URL_SECONDARY: ${{ env.MAINNET_RPC_URL_SECONDARY }}
+        run: |
+          echo "🔍 Checking secondary Mainnet RPC health…"
+          RESPONSE=$(curl -fsSL --max-time 10 -X POST "$MAINNET_RPC_URL_SECONDARY" \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":[]}' 2>/dev/null || true)
+          if echo "$RESPONSE" | grep -q '"result"'; then
+            echo "✅ Secondary Mainnet RPC is healthy"
+          else
+            echo "⚠️  Secondary Mainnet RPC unavailable (non-blocking — primary will be used)"
+          fi
+
+      - name: Simulate contracts against primary Mainnet RPC
         env:
           STELLAR_RPC_URL: ${{ env.MAINNET_RPC_URL }}
           STELLAR_NETWORK_PASSPHRASE: ${{ env.MAINNET_PASSPHRASE }}
-          WASM_DIR: artifacts
         run: node scripts/deploy.cjs --simulate-only
         # Exits non-zero if any simulation fails, blocking the deploy.
+
+      - name: Simulate contracts against secondary Mainnet RPC (cross-validation)
+        env:
+          STELLAR_RPC_URL: ${{ env.MAINNET_RPC_URL_SECONDARY }}
+        run: |
+          echo "🔍 Cross-validating simulations against secondary RPC…"
+          node scripts/deploy.cjs --simulate-only || \
+            echo "⚠️  Secondary RPC simulation failed (warning only — primary passed)"
 
   deploy-contracts:
     name: Deploy Soroban Contracts to Mainnet
@@ -63,6 +130,8 @@ jobs:
       escrow_contract_id: ${{ steps.deploy.outputs.escrow_contract_id }}
       freelancer_contract_id: ${{ steps.deploy.outputs.freelancer_contract_id }}
       governance_contract_id: ${{ steps.deploy.outputs.governance_contract_id }}
+      oracle_contract_id: ${{ steps.deploy.outputs.oracle_contract_id }}
+      identity_contract_id: ${{ steps.deploy.outputs.identity_contract_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -97,7 +166,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
         with:
-          version: 8
+          version: 10
 
       - uses: actions/setup-node@v6
         with:
@@ -116,6 +185,8 @@ jobs:
           NEXT_PUBLIC_ESCROW_CONTRACT_ID: ${{ needs.deploy-contracts.outputs.escrow_contract_id }}
           NEXT_PUBLIC_FREELANCER_CONTRACT_ID: ${{ needs.deploy-contracts.outputs.freelancer_contract_id }}
           NEXT_PUBLIC_GOVERNANCE_CONTRACT_ID: ${{ needs.deploy-contracts.outputs.governance_contract_id }}
+          NEXT_PUBLIC_ORACLE_CONTRACT_ID: ${{ needs.deploy-contracts.outputs.oracle_contract_id }}
+          NEXT_PUBLIC_IDENTITY_CONTRACT_ID: ${{ needs.deploy-contracts.outputs.identity_contract_id }}
         run: pnpm build
 
       - name: Deploy to Vercel (production)
@@ -135,10 +206,13 @@ jobs:
         id: payload
         run: |
           STATUS="✅ Success"
+          COLOR="good"
           if [[ "${{ needs.deploy-contracts.result }}" != "success" || "${{ needs.deploy-frontend.result }}" != "success" ]]; then
             STATUS="❌ Failed"
+            COLOR="danger"
           fi
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "color=$COLOR"   >> "$GITHUB_OUTPUT"
           echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Post to Slack
@@ -151,16 +225,42 @@ jobs:
             -d '{
               "text": "${{ steps.payload.outputs.status }} *Stellar Mainnet Deploy* — `${{ steps.payload.outputs.tag }}`",
               "attachments": [{
-                "color": "${{ needs.deploy-contracts.result == '"'"'success'"'"' && needs.deploy-frontend.result == '"'"'success'"'"' && '"'"'good'"'"' || '"'"'danger'"'"' }}",
+                "color": "${{ steps.payload.outputs.color }}",
                 "fields": [
                   {"title": "Bounty Contract",     "value": "`${{ needs.deploy-contracts.outputs.bounty_contract_id }}`",     "short": true},
                   {"title": "Escrow Contract",     "value": "`${{ needs.deploy-contracts.outputs.escrow_contract_id }}`",     "short": true},
                   {"title": "Freelancer Contract", "value": "`${{ needs.deploy-contracts.outputs.freelancer_contract_id }}`", "short": true},
                   {"title": "Governance Contract", "value": "`${{ needs.deploy-contracts.outputs.governance_contract_id }}`", "short": true},
+                  {"title": "Oracle Contract",     "value": "`${{ needs.deploy-contracts.outputs.oracle_contract_id }}`",     "short": true},
+                  {"title": "Identity Contract",   "value": "`${{ needs.deploy-contracts.outputs.identity_contract_id }}`",   "short": true},
                   {"title": "Run",                 "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>", "short": false}
                 ]
               }]
             }'
+
+      - name: Post to Discord
+        if: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          COLOR_INT=$([[ "${{ steps.payload.outputs.color }}" == "good" ]] && echo 3066993 || echo 15158332)
+          curl -fsSL -X POST "$DISCORD_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"${{ steps.payload.outputs.status }} Stellar Mainnet Deploy — \`${{ steps.payload.outputs.tag }}\`\",
+                \"color\": $COLOR_INT,
+                \"fields\": [
+                  {\"name\": \"Bounty\",     \"value\": \"\`${{ needs.deploy-contracts.outputs.bounty_contract_id }}\`\",     \"inline\": true},
+                  {\"name\": \"Escrow\",     \"value\": \"\`${{ needs.deploy-contracts.outputs.escrow_contract_id }}\`\",     \"inline\": true},
+                  {\"name\": \"Freelancer\", \"value\": \"\`${{ needs.deploy-contracts.outputs.freelancer_contract_id }}\`\", \"inline\": true},
+                  {\"name\": \"Governance\", \"value\": \"\`${{ needs.deploy-contracts.outputs.governance_contract_id }}\`\", \"inline\": true},
+                  {\"name\": \"Oracle\",     \"value\": \"\`${{ needs.deploy-contracts.outputs.oracle_contract_id }}\`\",     \"inline\": true},
+                  {\"name\": \"Identity\",   \"value\": \"\`${{ needs.deploy-contracts.outputs.identity_contract_id }}\`\",   \"inline\": true},
+                  {\"name\": \"Logs\",       \"value\": \"[${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\", \"inline\": false}
+                ]
+              }]
+            }"
 
       - name: Create GitHub deployment summary
         run: |
@@ -173,6 +273,17 @@ jobs:
           | Escrow | \`${{ needs.deploy-contracts.outputs.escrow_contract_id }}\` |
           | Freelancer | \`${{ needs.deploy-contracts.outputs.freelancer_contract_id }}\` |
           | Governance | \`${{ needs.deploy-contracts.outputs.governance_contract_id }}\` |
+          | Oracle | \`${{ needs.deploy-contracts.outputs.oracle_contract_id }}\` |
+          | Identity | \`${{ needs.deploy-contracts.outputs.identity_contract_id }}\` |
+
+          ### Network Details
+          | Field | Value |
+          |---|---|
+          | Network | Mainnet |
+          | Passphrase | \`${{ env.MAINNET_PASSPHRASE }}\` |
+          | Primary RPC | \`${{ env.MAINNET_RPC_URL }}\` |
+          | Trigger | Release \`${{ steps.payload.outputs.tag }}\` |
+          | Commit | \`${{ github.sha }}\` |
 
           [View full run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           EOF

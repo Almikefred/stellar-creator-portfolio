@@ -3,7 +3,7 @@
  * Handles isolation levels, pessimistic locking, and deadlock prevention
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '@/lib/prisma';
 
 /**
  * PostgreSQL Isolation Levels
@@ -13,10 +13,10 @@ import { prisma } from "@/lib/prisma";
  * - SERIALIZABLE: Highest isolation, prevents all anomalies (best for escrow)
  */
 export enum IsolationLevel {
-  READ_UNCOMMITTED = "READ UNCOMMITTED",
-  READ_COMMITTED = "READ COMMITTED",
-  REPEATABLE_READ = "REPEATABLE READ",
-  SERIALIZABLE = "SERIALIZABLE",
+  READ_UNCOMMITTED = 'READ UNCOMMITTED',
+  READ_COMMITTED = 'READ COMMITTED',
+  REPEATABLE_READ = 'REPEATABLE READ',
+  SERIALIZABLE = 'SERIALIZABLE',
 }
 
 /**
@@ -27,10 +27,10 @@ export enum IsolationLevel {
  * - FOR UPDATE SKIP LOCKED: Exclusive lock, skips locked rows
  */
 export enum LockMode {
-  FOR_UPDATE = "FOR UPDATE",
-  FOR_SHARE = "FOR SHARE",
-  FOR_UPDATE_NOWAIT = "FOR UPDATE NOWAIT",
-  FOR_UPDATE_SKIP_LOCKED = "FOR UPDATE SKIP LOCKED",
+  FOR_UPDATE = 'FOR UPDATE',
+  FOR_SHARE = 'FOR SHARE',
+  FOR_UPDATE_NOWAIT = 'FOR UPDATE NOWAIT',
+  FOR_UPDATE_SKIP_LOCKED = 'FOR UPDATE SKIP LOCKED',
 }
 
 /**
@@ -85,8 +85,8 @@ export async function executeTransaction<T>(
 
       // Check if it's a deadlock error
       const isDeadlock =
-        lastError.message.includes("deadlock detected") ||
-        lastError.message.includes("Deadlock found");
+        lastError.message.includes('deadlock detected') ||
+        lastError.message.includes('Deadlock found');
 
       if (!isDeadlock || attempt === maxRetries - 1) {
         throw lastError;
@@ -98,7 +98,7 @@ export async function executeTransaction<T>(
     }
   }
 
-  throw lastError || new Error("Transaction failed after max retries");
+  throw lastError || new Error('Transaction failed after max retries');
 }
 
 /**
@@ -190,7 +190,7 @@ export class DeadlockDetector {
       this.deadlocks = this.deadlocks.slice(-100);
     }
 
-    console.error("[DeadlockDetector]", {
+    console.error('[DeadlockDetector]', {
       tables,
       error,
       timestamp: new Date().toISOString(),

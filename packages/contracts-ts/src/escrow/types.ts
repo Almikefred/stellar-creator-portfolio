@@ -8,10 +8,24 @@ import {Address} from '@stellar/stellar-sdk';
   { tag: "EscrowCounter"; values: void } |
   { tag: "Yield"; values: readonly [bigint] } |
   { tag: "YieldCfg"; values: void } |
+  { tag: "YieldPaused"; values: void } |
   { tag: "MilestoneCount"; values: readonly [bigint] } |
   { tag: "MilestoneTotal"; values: readonly [bigint] } |
   { tag: "MilestoneReleasedCount"; values: readonly [bigint] } |
-  { tag: "MilestoneReleasedAmount"; values: readonly [bigint] };
+  { tag: "MilestoneReleasedAmount"; values: readonly [bigint] } |
+  { tag: "DisputeExpiry"; values: readonly [bigint] } |
+  { tag: "DisputeSplit"; values: void } |
+  { tag: "FeeConfig"; values: void } |
+  { tag: "OracleStalenessSecs"; values: void } |
+  { tag: "OracleAddress"; values: void };
+
+/**
+ * Governance-configurable fee configuration stored on-chain (#722).
+ */
+export interface FeeConfig {
+  fee_bps: bigint;
+  fee_cap: bigint;
+}
 
 /**
  * Milestone â€” a named portion of the total escrow amount
@@ -32,8 +46,12 @@ export interface Milestone {
  * (e.g. 500 = 5 % cap; protects against runaway accrual)
  * `min_liquidity_bps`  — minimum principal that must remain liquid, in bps of
  * total locked (e.g. 9000 = 90 % must stay withdrawable)
+ * `max_slippage_bps`   — maximum acceptable slippage for yield-protocol
+ * deposits, in bps (e.g. 100 = 1 %); governance-
+ * configurable via `configure_slippage`
  */
 export interface YieldConfig {
+  max_slippage_bps: number;
   max_yield_ratio: number;
   min_liquidity_bps: number;
   rate_bps: number;
@@ -91,6 +109,17 @@ export interface EscrowAccount {
   released_at: bigint | null;
   status: EscrowStatus;
   token: string;
+}
+
+/**
+ * Mirrors `oracle::PriceData` field-for-field so the cross-contract call in
+ * `release_funds` can decode the oracle's return value without a crate
+ * dependency on the oracle contract itself.
+ */
+export interface OraclePriceData {
+  price_micro_usd: bigint;
+  sources: number;
+  timestamp: bigint;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatRating } from './utils';
-import { validateReview, type ReviewSubmission, type FieldError } from './api-models';
+import { validateReview, type ReviewSubmission } from './api-models';
 
 describe('Rating Math - Frontend Utilities', () => {
   describe('formatRating', () => {

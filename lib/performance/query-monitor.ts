@@ -15,7 +15,7 @@ class QueryMonitor {
   private metrics: QueryMetric[] = [];
   private readonly maxMetrics = 1000;
   private enabled =
-    typeof window !== "undefined" && process.env.NODE_ENV === "development";
+    typeof window !== 'undefined' && process.env.NODE_ENV === 'development';
 
   recordQuery(
     path: string,
@@ -108,13 +108,13 @@ class QueryMonitor {
     const summary = this.getSummary();
     const suspicious = this.detectN1Patterns();
 
-    console.group("📊 Query Performance Report");
-    console.log("Total Queries:", summary.totalQueries);
-    console.log("Avg Duration:", summary.avgDuration + "ms");
-    console.log("Total Duration:", summary.totalDuration + "ms");
+    console.group('📊 Query Performance Report');
+    console.log('Total Queries:', summary.totalQueries);
+    console.log('Avg Duration:', summary.avgDuration + 'ms');
+    console.log('Total Duration:', summary.totalDuration + 'ms');
 
     if (suspicious.length > 0) {
-      console.group("⚠️ Potential N+1 Patterns Detected");
+      console.group('⚠️ Potential N+1 Patterns Detected');
       suspicious.forEach((pattern) => {
         console.warn(
           `${pattern.path}: ${pattern.count} queries in 1s (${pattern.avgDuration}ms avg)`,
@@ -140,7 +140,7 @@ export async function monitoredFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const method = init?.method || "GET";
+  const method = init?.method || 'GET';
   const startTime = performance.now();
 
   try {
@@ -149,7 +149,7 @@ export async function monitoredFetch<T>(
 
     // Extract batch size from request body if available
     let batchSize: number | undefined;
-    if (init?.body && typeof init.body === "string") {
+    if (init?.body && typeof init.body === 'string') {
       try {
         const body = JSON.parse(init.body);
         if (Array.isArray(body.creatorIds)) {

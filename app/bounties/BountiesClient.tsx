@@ -1,14 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc-client';
-import type { Bounty } from '@/lib/creators-data';
+import { isValidStellarAddress } from '@/lib/utils/stellar-address';
+import type { Bounty } from '@/lib/services/creators-data';
 
 const DIFFICULTIES = ['beginner', 'intermediate', 'advanced', 'expert'] as const;
 
+/**
+ * Fields the listing and apply modal need. Satisfied by both the static
+ * seed bounties and rows from the bounties.list tRPC query.
+ */
+type BountyListItem = Pick<Bounty, 'id' | 'title' | 'description' | 'budget' | 'tags' | 'difficulty'> & {
+  category: string | null;
+  applicants?: number;
+};
+
 interface ApplyModalProps {
-  bounty: Bounty;
+  bounty: BountyListItem;
   onClose: () => void;
 }
 
@@ -17,13 +27,15 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
   const [budget, setBudget] = useState(bounty.budget);
   const [timeline, setTimeline] = useState(14);
   const [proposal, setProposal] = useState('');
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousActiveElement = useRef<HTMLElement | null>(null);
   
   // Use tRPC mutation for escrow creation
   const createEscrowMutation = trpc.escrow.create.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       setSuccess({ txHash: data.txHash, escrowId: data.escrowId });
     },
-    onError: (error) => {
+    onError: (error: any) => {
       setError(error.message);
     },
   });
@@ -31,22 +43,58 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ txHash: string; escrowId: string } | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    previousActiveElement.current = document.activeElement as HTMLElement;
+    if (modalRef.current) {
+      modalRef.current.focus();
+    }
+    return () => {
+      previousActiveElement.current?.focus();
+    };
+  }, []);
+
+  const handleKeyDown = (e: any) => {
+    if (e.key === 'Escape') {
+      onClose();
+    }
+    if (e.key === 'Tab') {
+      const focusableElements = modalRef.current?.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusableElements) {
+        const firstElement = focusableElements[0] as HTMLElement;
+        const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+        if (e.shiftKey && document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement.focus();
+        } else if (!e.shiftKey && document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement.focus();
+        }
+      }
+    }
+  };
+
+  const handleSubmit = async (e: any) => {
     e.preventDefault();
     setError(null);
     if (!proposal.trim()) { setError('Proposal is required.'); return; }
     if (budget <= 0) { setError('Budget must be positive.'); return; }
+    if (!isValidStellarAddress(walletAddress)) {
+      setError('Enter a valid Stellar wallet address (G...).');
+      return;
+    }
     
     createEscrowMutation.mutate({
       bountyId: bounty.id,
-      payerAddress: walletAddress,
+      payerAddress: walletAddress.trim(),
       payeeAddress: 'PAYEE_ADDRESS_PLACEHOLDER', // Replace with actual payee
       amount: budget,
       token: 'USDC', // Default token
     });
   };
 
-  const submitting = createEscrowMutation.isLoading;
+  const submitting = createEscrowMutation.isPending;
 
   const inputCls = 'w-full px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary';
 
@@ -57,14 +105,23 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
       aria-label={`Apply to ${bounty.title}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={onClose}
+      onKeyDown={handleKeyDown}
     >
       <div
-        className="bg-card border border-border rounded-xl p-6 w-full max-w-lg mx-4 space-y-4"
+        ref={modalRef}
+        tabIndex={-1}
+        className="bg-card border border-border rounded-xl p-6 w-full max-w-lg mx-4 space-y-4 focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">Apply: {bounty.title}</h2>
-          <button aria-label="Close" onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+          <button 
+            aria-label="Close modal" 
+            onClick={onClose} 
+            className="text-muted-foreground hover:text-foreground p-2 rounded hover:bg-secondary/50 focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="text-xs bg-muted/50 border border-border rounded-md px-3 py-2 text-muted-foreground">
@@ -78,27 +135,63 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
             <p className="text-xs text-muted-foreground">Escrow ID: {success.escrowId} · TX: {success.txHash}</p>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} noValidate className="space-y-4">
+            {/* noValidate: handleSubmit validates so errors reach the role="alert" region */}
             <div>
               <label htmlFor="wallet-address" className="block text-sm font-medium text-foreground mb-1">Stellar Wallet Address</label>
-              <input id="wallet-address" type="text" value={walletAddress} onChange={e => setWalletAddress(e.target.value)} className={inputCls} placeholder="G..." />
+              <input 
+                id="wallet-address" 
+                type="text" 
+                value={walletAddress} 
+                onChange={e => setWalletAddress(e.target.value)} 
+                className={inputCls} 
+                placeholder="G..." 
+                aria-required="true"
+                aria-invalid={!!error && !isValidStellarAddress(walletAddress)}
+              />
             </div>
             <div>
               <label htmlFor="proposed-budget" className="block text-sm font-medium text-foreground mb-1">Proposed Budget (USD)</label>
-              <input id="proposed-budget" type="number" value={budget} onChange={e => setBudget(Number(e.target.value))} min={1} className={inputCls} />
+              <input 
+                id="proposed-budget" 
+                type="number" 
+                value={budget} 
+                onChange={e => setBudget(Number(e.target.value))} 
+                min={1} 
+                className={inputCls}
+                aria-required="true"
+                aria-invalid={!!error && budget <= 0}
+              />
             </div>
             <div>
               <label htmlFor="delivery-timeline" className="block text-sm font-medium text-foreground mb-1">Delivery Timeline (days)</label>
-              <input id="delivery-timeline" type="number" value={timeline} onChange={e => setTimeline(Number(e.target.value))} min={1} className={inputCls} />
+              <input 
+                id="delivery-timeline" 
+                type="number" 
+                value={timeline} 
+                onChange={e => setTimeline(Number(e.target.value))} 
+                min={1} 
+                className={inputCls}
+                aria-required="true"
+              />
             </div>
             <div>
               <label htmlFor="proposal-text" className="block text-sm font-medium text-foreground mb-1">Proposal</label>
-              <textarea id="proposal-text" value={proposal} onChange={e => setProposal(e.target.value)} rows={4} className={inputCls} placeholder="Describe your approach..." />
+              <textarea 
+                id="proposal-text" 
+                value={proposal} 
+                onChange={e => setProposal(e.target.value)} 
+                rows={4} 
+                className={inputCls} 
+                placeholder="Describe your approach..."
+                aria-required="true"
+                aria-invalid={!!error && !proposal.trim()}
+              />
             </div>
-            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" aria-live="assertive" className="text-sm text-destructive">{error}</p>}
             <div className="flex gap-3 justify-end">
               <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
-              <Button type="submit" disabled={submitting}>
+              <Button type="submit" disabled={submitting} aria-busy={submitting}>
                 {submitting ? 'Submitting...' : 'Submit'}
               </Button>
             </div>
@@ -112,17 +205,19 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
 export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
   const [difficulty, setDifficulty] = useState<string | null>(null);
   const [category, setCategory] = useState<string | null>(null);
-  const [activeBounty, setActiveBounty] = useState<Bounty | null>(null);
+  const [activeBounty, setActiveBounty] = useState<BountyListItem | null>(null);
 
   // Use tRPC query for bounties
-  const bountiesQuery = trpc.bounties.list.useQuery({
-    take: 50,
-    status: difficulty ? (difficulty as any) : undefined,
-  });
+  const bountiesQuery = trpc.bounties.list.useQuery({ take: 50 });
 
-  const categories = Array.from(new Set((bountiesQuery.data?.bounties || bounties).map((b) => b.category)));
-  
-  const filtered = (bountiesQuery.data?.bounties || bounties).filter((b) => {
+  // Fall back to the server-provided list until (or unless) the query resolves.
+  const allBounties: BountyListItem[] = bountiesQuery.data?.bounties ?? bounties;
+
+  const categories = Array.from(
+    new Set(allBounties.map((b) => b.category).filter((c): c is string => Boolean(c))),
+  );
+
+  const filtered = allBounties.filter((b) => {
     if (difficulty && b.difficulty !== difficulty) return false;
     if (category && b.category !== category) return false;
     return true;
@@ -143,7 +238,7 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
 
       {/* Hero */}
       <section className="border-b border-border bg-muted/30 py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="page-container">
           <h1 className="text-4xl sm:text-5xl font-bold text-foreground mb-3">Bounty Marketplace</h1>
           <p className="text-lg text-muted-foreground max-w-2xl">
             Discover short-term, high-impact projects. Apply with your proposal and get paid via escrow.
@@ -153,11 +248,17 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
 
       {/* Filters */}
       <section className="border-b border-border py-6 sticky top-16 bg-background/80 backdrop-blur-md z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-3">
+        <div className="page-container space-y-3">
           <div className="flex flex-wrap gap-2 items-center">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Difficulty:</span>
             {DIFFICULTIES.map((d) => (
-              <Button key={d} size="sm" variant={difficulty === d ? 'default' : 'outline'} onClick={() => setDifficulty(difficulty === d ? null : d)}>
+              <Button 
+                key={d} 
+                size="sm" 
+                variant={difficulty === d ? 'default' : 'outline'} 
+                onClick={() => setDifficulty(difficulty === d ? null : d)}
+                aria-pressed={difficulty === d}
+              >
                 {d}
               </Button>
             ))}
@@ -165,12 +266,18 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
           <div className="flex flex-wrap gap-2 items-center">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Category:</span>
             {categories.map((c) => (
-              <Button key={c} size="sm" variant={category === c ? 'default' : 'outline'} onClick={() => setCategory(category === c ? null : c)}>
+              <Button 
+                key={c} 
+                size="sm" 
+                variant={category === c ? 'default' : 'outline'} 
+                onClick={() => setCategory(category === c ? null : c)}
+                aria-pressed={category === c}
+              >
                 {c}
               </Button>
             ))}
             {(difficulty || category) && (
-              <Button size="sm" variant="ghost" onClick={resetFilters}>Reset Filters</Button>
+              <Button size="sm" variant="ghost" onClick={resetFilters} aria-label="Reset all filters">Reset Filters</Button>
             )}
           </div>
         </div>
@@ -178,7 +285,7 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
 
       {/* Listing */}
       <section className="py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="page-container">
           <p className="text-sm text-muted-foreground mb-6">
             {filtered.length > 0
               ? `Showing ${filtered.length} bounties`
@@ -186,7 +293,7 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
           </p>
 
           {filtered.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:gap-6">
               {filtered.map((bounty) => (
                 <div key={bounty.id} className="bg-card border border-border rounded-xl p-6 space-y-4 hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start gap-4">
@@ -208,8 +315,10 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
                     ))}
                   </div>
                   <div className="flex items-center justify-between pt-2">
-                    <span className="text-xs text-muted-foreground">{bounty.applicants} applicants</span>
-                    <Button size="sm" onClick={() => setActiveBounty(bounty)}>Apply Now</Button>
+                    <span className="text-xs text-muted-foreground">
+                      {bounty.applicants !== undefined ? `${bounty.applicants} applicants` : ''}
+                    </span>
+                    <Button size="sm" onClick={() => setActiveBounty(bounty)} aria-label={`Apply to ${bounty.title}`}>Apply Now</Button>
                   </div>
                 </div>
               ))}

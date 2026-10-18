@@ -1,5 +1,5 @@
 /**
- * Tests for backend/services/audit.ts  (#508)
+ * Tests for server/services/audit.ts  (#508)
  *
  * Covers:
  *  - hashIp()               — one-way IP hashing
@@ -20,7 +20,7 @@ import {
   writeAuditLog,
   withAuditLog,
   createAuditInterceptor,
-} from '@/backend/services/audit';
+} from '@/server/services/audit';
 
 // ── Mock Prisma ──────────────────────────────────────────────────────────────
 

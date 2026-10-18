@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from 'react';
 
 /**
  * Wrapper component that prevents hydration mismatches
@@ -43,7 +43,7 @@ export function useBrowserOnly<T>(getValue: () => T, defaultValue: T): T {
     try {
       setValue(getValue());
     } catch (error) {
-      console.error("Error getting browser value:", error);
+      console.error('Error getting browser value:', error);
     }
   }, [getValue]);
 
@@ -72,7 +72,7 @@ export function useWindow(): typeof window | null {
   const [window_, setWindow] = useState<typeof window | null>(null);
 
   useEffect(() => {
-    setWindow(typeof window !== "undefined" ? window : null);
+    setWindow(typeof window !== 'undefined' ? window : null);
   }, []);
 
   return window_;
@@ -86,7 +86,7 @@ export function useDocument(): typeof document | null {
   const [document_, setDocument] = useState<typeof document | null>(null);
 
   useEffect(() => {
-    setDocument(typeof document !== "undefined" ? document : null);
+    setDocument(typeof document !== 'undefined' ? document : null);
   }, []);
 
   return document_;
@@ -100,7 +100,7 @@ export function useLocalStorage(): Storage | null {
   const [storage, setStorage] = useState<Storage | null>(null);
 
   useEffect(() => {
-    setStorage(typeof localStorage !== "undefined" ? localStorage : null);
+    setStorage(typeof localStorage !== 'undefined' ? localStorage : null);
   }, []);
 
   return storage;
@@ -114,7 +114,7 @@ export function useSessionStorage(): Storage | null {
   const [storage, setStorage] = useState<Storage | null>(null);
 
   useEffect(() => {
-    setStorage(typeof sessionStorage !== "undefined" ? sessionStorage : null);
+    setStorage(typeof sessionStorage !== 'undefined' ? sessionStorage : null);
   }, []);
 
   return storage;
@@ -134,9 +134,9 @@ export function useIsMobileViewport(breakpoint = 768): boolean {
     const onChange = () => {
       setIsMobile(window.innerWidth < breakpoint);
     };
-    mql.addEventListener("change", onChange);
+    mql.addEventListener('change', onChange);
     setIsMobile(window.innerWidth < breakpoint);
-    return () => mql.removeEventListener("change", onChange);
+    return () => mql.removeEventListener('change', onChange);
   }, [breakpoint]);
 
   return mounted ? isMobile : false;
@@ -152,13 +152,13 @@ export function usePrefersDarkMode(): boolean {
 
   useEffect(() => {
     setMounted(true);
-    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
     const onChange = () => {
       setPrefersDark(mql.matches);
     };
-    mql.addEventListener("change", onChange);
+    mql.addEventListener('change', onChange);
     setPrefersDark(mql.matches);
-    return () => mql.removeEventListener("change", onChange);
+    return () => mql.removeEventListener('change', onChange);
   }, []);
 
   return mounted ? prefersDark : false;
@@ -174,13 +174,13 @@ export function usePrefersReducedMotion(): boolean {
 
   useEffect(() => {
     setMounted(true);
-    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const mql = window.matchMedia('(prefers-reduced-motion: reduce)');
     const onChange = () => {
       setPrefersReduced(mql.matches);
     };
-    mql.addEventListener("change", onChange);
+    mql.addEventListener('change', onChange);
     setPrefersReduced(mql.matches);
-    return () => mql.removeEventListener("change", onChange);
+    return () => mql.removeEventListener('change', onChange);
   }, []);
 
   return mounted ? prefersReduced : false;

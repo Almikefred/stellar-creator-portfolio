@@ -2,6 +2,7 @@ import { fetchCreatorCore, fetchCreatorSocial } from '@/lib/streaming/chunk-data
 import { notFound } from 'next/navigation';
 import Image from 'next/image';
 import { HireMeDialog } from '@/components/creators/hire-me-dialog';
+import { SocialShare } from '@/components/common/social-share';
 
 export async function CreatorHeroSection({ id }: { id: string }) {
   const [creator, social] = await Promise.all([fetchCreatorCore(id), fetchCreatorSocial(id)]);
@@ -12,14 +13,16 @@ export async function CreatorHeroSection({ id }: { id: string }) {
       <div className="relative h-48 sm:h-64 w-full bg-muted overflow-hidden">
         <Image
           src={creator.coverImage}
-          alt={`${creator.name} cover`}
+          alt={`${creator.name} cover image`}
           fill
+          sizes="100vw"
           className="object-cover"
           priority
+          loading="eager"
         />
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="page-container">
         <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-12 mb-8">
           <div className="relative w-24 h-24 rounded-full overflow-hidden border-4 border-background bg-muted shrink-0">
             <Image src={creator.avatar} alt={creator.name} fill className="object-cover" />
@@ -38,6 +41,12 @@ export async function CreatorHeroSection({ id }: { id: string }) {
               Twitter
             </a>
             <HireMeDialog creatorId={id} creatorName={social.name} skills={creator.skills} />
+            <SocialShare
+              title={`Check out ${social.name} on Tamgora Creators`}
+              description={social.title}
+              url={`/creators/${id}`}
+              hashtags={['TamgoraCreators', 'Web3', 'Portfolio']}
+            />
           </div>
         </div>
       </div>

@@ -10,8 +10,8 @@
  * Or schedule in your cron runner (e.g. pg_cron, Inngest, GitHub Actions nightly)
  */
 
-import { prisma } from "@/lib/prisma";
-import { VerificationTier } from "@prisma/client";
+import { prisma } from '@/lib/prisma';
+import { VerificationTier } from '@prisma/client';
 
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -37,20 +37,20 @@ function computeEligibleTier(profile: {
     rating >= 4.5 &&
     isOneYearActive
   ) {
-    return "ELITE";
+    return 'ELITE';
   }
 
   // Trusted: 10+ bounties, rating ≥ 4.0
   if (verified && completedProjects >= 10 && rating >= 4.0) {
-    return "TRUSTED";
+    return 'TRUSTED';
   }
 
   // Verified: KYC approved
   if (verified) {
-    return "VERIFIED";
+    return 'VERIFIED';
   }
 
-  return "NONE";
+  return 'NONE';
 }
 
 /**
@@ -81,7 +81,7 @@ async function processCreator(profile: {
         verificationTier: eligibleTier,
         // Stamp firstActiveAt on first time they become VERIFIED+
         ...(profile.firstActiveAt == null &&
-          eligibleTier !== "NONE" && { firstActiveAt: new Date() }),
+          eligibleTier !== 'NONE' && { firstActiveAt: new Date() }),
       },
     }),
     prisma.tierHistory.create({
@@ -90,7 +90,7 @@ async function processCreator(profile: {
         previousTier,
         newTier: eligibleTier,
         reason,
-        triggeredBy: "system",
+        triggeredBy: 'system',
       },
     }),
   ]);
@@ -105,7 +105,7 @@ function buildReason(
   const { completedProjects, rating, firstActiveAt } = profile;
   const yearsActive = firstActiveAt
     ? ((Date.now() - firstActiveAt.getTime()) / (1000 * 60 * 60 * 24 * 365)).toFixed(1)
-    : "0";
+    : '0';
   return `nightly_cron: tier=${newTier}, bounties=${completedProjects}, rating=${rating.toFixed(2)}, yearsActive=${yearsActive}`;
 }
 
@@ -140,7 +140,7 @@ export async function runTierUpgrade(
       take: batchSize,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
-      orderBy: { id: "asc" },
+      orderBy: { id: 'asc' },
       select: {
         id: true,
         verified: true,
@@ -179,7 +179,7 @@ export async function runTierUpgrade(
   console.info(
     `[tier-upgrade] Done: total=${report.total}, changed=${report.changed}, errors=${report.errors}, duration=${report.durationMs}ms`,
   );
-  console.info(`[tier-upgrade] Breakdown:`, report.byNewTier);
+  console.info('[tier-upgrade] Breakdown:', report.byNewTier);
 
   return report;
 }

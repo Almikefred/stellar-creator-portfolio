@@ -1,6 +1,6 @@
+export * from './core';
 export * from './image-utils';
 export * from './mobile-nav-utils';
 export * from './project-helpers';
-export * from './utils';
+export { typography } from './typography';
 export * from './validators';
-export { getTypography } from './typography';

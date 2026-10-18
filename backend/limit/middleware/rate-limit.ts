@@ -4,7 +4,20 @@
  */
 
 import { Request, Response, NextFunction } from "express";
-import { RedisClient } from "redis";
+/**
+ * The subset of a node-redis v4 client used for distributed limiting. Typed
+ * here so `redis` stays optional: callers who want shared limits pass their
+ * own connected client.
+ */
+export interface RedisClient {
+  get(key: string): Promise<string | null>;
+  del(key: string): Promise<number>;
+  zRemRangeByScore(key: string, min: number | string, max: number | string): Promise<number>;
+  zCard(key: string): Promise<number>;
+  zAdd(key: string, member: { score: number; value: string }): Promise<number>;
+  expire(key: string, seconds: number): Promise<boolean | number>;
+  setEx(key: string, seconds: number, value: string): Promise<string | null>;
+}
 
 // ─── Per-Endpoint Rate Limit Constants ─────────────────────────────────────
 
@@ -34,14 +47,35 @@ export const ENDPOINT_RATE_LIMITS = {
 
 // ─── Prometheus Metrics ───────────────────────────────────────────────────
 
+/** Minimal shape of a prom-client Counter used by this module. */
+interface CounterMetric {
+  inc: (labels: Record<string, string>) => void;
+}
+
+/**
+ * Minimal shape of a prom-client Registry. Declared locally so prom-client
+ * stays an optional dependency.
+ */
+interface MetricsRegistry {
+  registerMetric: (metric: unknown) => void;
+}
+
+/** Request that may carry identity attached by upstream auth middleware. */
+interface AuthenticatedRequest extends Request {
+  user?: { id?: string; role?: string };
+  userId?: string;
+  role?: string;
+}
+
 let prometheusMetrics: {
-  rateLimitHitsTotal?: { inc: (labels: any) => void };
+  rateLimitHitsTotal?: CounterMetric;
+  redisFallbackTotal?: CounterMetric;
 } = {};
 
 /**
  * Initialize Prometheus metrics (called once during app setup)
  */
-export function initPrometheusMetrics(register: any): void {
+export function initPrometheusMetrics(register: MetricsRegistry): void {
   try {
     // Import prometheus client if available
     const prometheus = require("prom-client");
@@ -51,6 +85,13 @@ export function initPrometheusMetrics(register: any): void {
       name: "rate_limit_hits_total",
       help: "Total number of rate limit checks",
       labelNames: ["endpoint", "result"],
+      registers: [register],
+    });
+
+    prometheusMetrics.redisFallbackTotal = new prometheus.Counter({
+      name: "rate_limit_redis_fallback_total",
+      help: "Total number of Redis fallbacks to in-memory rate limiting",
+      labelNames: ["endpoint", "error_type"],
       registers: [register],
     });
   } catch {
@@ -70,6 +111,15 @@ function recordRateLimitMetric(
   }
 }
 
+/**
+ * Record a Redis fallback event in Prometheus
+ */
+function recordRedisFallbackMetric(endpoint: string, errorType: string): void {
+  if (prometheusMetrics.redisFallbackTotal) {
+    prometheusMetrics.redisFallbackTotal.inc({ endpoint, error_type: errorType });
+  }
+}
+
 interface RateLimitEntry {
   count: number;
   resetTime: number;
@@ -77,8 +127,8 @@ interface RateLimitEntry {
 }
 
 interface RateLimitConfig {
-  windowMs: number; // Time window in milliseconds
-  maxRequests: number; // Max requests per window
+  windowMs?: number; // Time window in milliseconds (default 60s)
+  maxRequests?: number; // Max requests per window (default 100)
   keyGenerator?: (req: Request) => string; // Custom key generator
   skip?: (req: Request) => boolean; // Skip rate limiting for certain requests
   onLimitReached?: (req: Request, res: Response) => void; // Callback when limit reached
@@ -97,16 +147,16 @@ interface RateLimitStore {
  */
 export class RateLimiter {
   private store: RateLimitStore = {};
-  private config: RateLimitConfig;
-  private cleanupInterval: NodeJS.Timeout;
+  protected config: RateLimitConfig & { windowMs: number; maxRequests: number };
+  private cleanupInterval?: NodeJS.Timeout;
   private redisClient?: RedisClient;
 
   constructor(config: RateLimitConfig) {
     this.config = {
-      windowMs: 60000, // Default: 1 minute
-      maxRequests: 100,
       blockDurationMs: 300000, // Default: 5 minutes block
       ...config,
+      windowMs: config.windowMs ?? 60000, // Default: 1 minute
+      maxRequests: config.maxRequests ?? 100,
     };
 
     this.redisClient = config.redisClient;
@@ -128,12 +178,14 @@ export class RateLimiter {
     }
 
     // Use API key if available, fallback to IP address
-    const apiKey = req.headers["x-api-key"] as string;
-    if (apiKey) {
+    // Optional chaining: requests built outside Express (tests, internal
+    // callers) may carry no headers or socket.
+    const apiKey = req.headers?.["x-api-key"];
+    if (typeof apiKey === "string" && apiKey) {
       return `api-key:${apiKey}`;
     }
 
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
     return `ip:${ip}`;
   }
 
@@ -141,7 +193,8 @@ export class RateLimiter {
    * Check if user has admin role (to bypass rate limits)
    */
   private isAdmin(req: Request): boolean {
-    const userRole = (req as any).user?.role || (req as any).role;
+    const authReq = req as AuthenticatedRequest;
+    const userRole = authReq.user?.role || authReq.role;
     return userRole === "admin" || userRole === "ADMIN";
   }
 
@@ -204,7 +257,7 @@ export class RateLimiter {
     if (isLimited) {
       // Enable DDoS protection: block for blockDurationMs
       if (!entry.blockedUntil) {
-        entry.blockedUntil = now + (this.config.blockDurationMs || 300000);
+        entry.blockedUntil = now + (this.config.blockDurationMs ?? 300000);
       }
     }
 
@@ -231,6 +284,19 @@ export class RateLimiter {
 
     try {
       const windowStart = now - this.config.windowMs;
+      const blockedUntilKey = `${key}:blocked`;
+      const endpointName = this.config.endpointName || "unknown";
+
+      // Check if currently blocked (DDoS protection)
+      const blockedUntilStr = await this.redisClient.get(blockedUntilKey);
+      if (blockedUntilStr) {
+        const blockedUntil = parseInt(blockedUntilStr, 10);
+        if (now < blockedUntil) {
+          return { limited: true, remaining: 0, reset: blockedUntil };
+        }
+        // Block expired, delete it
+        await this.redisClient.del(blockedUntilKey);
+      }
 
       // Remove old entries outside the window
       await this.redisClient.zRemRangeByScore(key, "-inf", windowStart);
@@ -240,10 +306,20 @@ export class RateLimiter {
       const isLimited = count >= this.config.maxRequests;
 
       // Add current request
-      await this.redisClient.zAdd(key, { score: now, member: String(now) });
+      await this.redisClient.zAdd(key, { score: now, value: String(now) });
 
       // Set expiration (window + extra time for safety)
       await this.redisClient.expire(key, Math.ceil((this.config.windowMs + 10000) / 1000));
+
+      // If limit reached, set block duration
+      if (isLimited) {
+        const blockedUntil = now + (this.config.blockDurationMs ?? 300000);
+        await this.redisClient.setEx(
+          blockedUntilKey,
+          Math.ceil((this.config.blockDurationMs ?? 300000) / 1000),
+          blockedUntil.toString(),
+        );
+      }
 
       return {
         limited: isLimited,
@@ -251,7 +327,24 @@ export class RateLimiter {
         reset: now + this.config.windowMs,
       };
     } catch (error) {
-      console.error("Redis rate limit check failed:", error);
+      // Determine error type for metric
+      let errorType = "unknown";
+      if (error instanceof Error) {
+        if (error.message.includes("ECONNREFUSED")) {
+          errorType = "connection_refused";
+        } else if (error.message.includes("timeout")) {
+          errorType = "timeout";
+        } else {
+          errorType = error.name || "unknown";
+        }
+      }
+
+      const endpointName = this.config.endpointName || "unknown";
+      console.error(`Redis rate limit check failed (${errorType}):`, error);
+
+      // Record fallback metric
+      recordRedisFallbackMetric(endpointName, errorType);
+
       // Fall back to in-memory on Redis error
       return this.checkLimitMemory(key, now);
     }
@@ -412,12 +505,13 @@ export class RequestQueue {
 
     if (item) {
       // Track when request completes
-      const originalSend = item.res.send;
-      item.res.send = function (data: any) {
+      const res = item.res;
+      const originalSend = res.send;
+      res.send = (body?: unknown): Response => {
         this.processing = Math.max(0, this.processing - 1);
         this.processNext();
-        return originalSend.call(this, data);
-      }.bind(this);
+        return originalSend.call(res, body);
+      };
 
       item.next();
       this.processNext();
@@ -472,16 +566,22 @@ export class AdaptiveRateLimiter extends RateLimiter {
    * Override middleware to use adaptive limits
    */
   public middleware() {
-    return (req: Request, res: Response, next: NextFunction) => {
-      // Temporarily adjust max requests
-      const originalMax = (this as any).config.maxRequests;
-      (this as any).config.maxRequests = this.getAdjustedLimit();
+    return async (req: Request, res: Response, next: NextFunction) => {
+      // Compute adjusted limit at request start
+      const adjustedLimit = this.getAdjustedLimit();
+      const originalMax = this.config.maxRequests;
 
-      const middleware = super.middleware();
-      middleware(req, res, next);
+      // Temporarily set adjusted limit
+      this.config.maxRequests = adjustedLimit;
 
-      // Restore original max
-      (this as any).config.maxRequests = originalMax;
+      try {
+        // Get parent middleware and await it completely before restoring config
+        const parentMiddleware = super.middleware();
+        await parentMiddleware(req, res, next);
+      } finally {
+        // Restore original max after middleware completes
+        this.config.maxRequests = originalMax;
+      }
     };
   }
 }
@@ -530,7 +630,8 @@ export function createEndpointRateLimiter(
     endpointName: endpoint,
     keyGenerator: (req: Request) => {
       // Use authenticated user ID if available, otherwise use IP + API key
-      const userId = (req as any).user?.id || (req as any).userId;
+      const authReq = req as AuthenticatedRequest;
+      const userId = authReq.user?.id || authReq.userId;
       const apiKey = req.headers["x-api-key"] as string;
       if (userId) {
         return `${endpoint}:${userId}`;

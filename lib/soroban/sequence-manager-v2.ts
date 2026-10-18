@@ -11,7 +11,7 @@
  * not per-request, so individual requests never block each other.
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '@/lib/prisma';
 
 const POOL_SIZE = 10;        // Pre-fetch window
 const POOL_REFILL_AT = 3;    // Refill when fewer than 3 remain
@@ -121,7 +121,7 @@ export async function refillSequencePool(
       // Find the highest sequence already in the pool for this account
       const highest = await prisma.sequencePool.findFirst({
         where: { accountId },
-        orderBy: { sequence: "desc" },
+        orderBy: { sequence: 'desc' },
         select: { sequence: true },
       });
 

@@ -17,13 +17,17 @@ import {
   type Bounty,
   type Creator,
   type CreatorReputationPayload,
+  type FilteredCreatorReputationPayload,
+  type PaginatedReviews,
+  type ReputationAggregation,
+  type ReviewFilterOptions,
   type PaginatedData,
   type ReviewSubmission,
   type EscrowTransactionRequest,
   type EscrowTransactionResponse,
   isApiSuccess,
-} from "./api-models";
-import { notifyLoadingChange } from "../components/layout-provider";
+} from './api-models';
+import { notifyLoadingChange } from '@/components/layout/layout-provider';
 
 // ── Error class ───────────────────────────────────────────────────────────────
 
@@ -35,7 +39,7 @@ export class ApiClientError extends Error {
     public readonly status?: number,
   ) {
     super(message);
-    this.name = "ApiClientError";
+    this.name = 'ApiClientError';
   }
 
   static fromApiError(error: ApiError, status?: number): ApiClientError {
@@ -48,43 +52,43 @@ export class ApiClientError extends Error {
   }
 
   static network(
-    message = "Network error — please check your connection",
+    message = 'Network error — please check your connection',
   ): ApiClientError {
-    return new ApiClientError("SERVICE_UNAVAILABLE", message);
+    return new ApiClientError('SERVICE_UNAVAILABLE', message);
   }
 }
 
 // ── Base fetch ────────────────────────────────────────────────────────────────
 
 const BASE_URL =
-  typeof process !== "undefined" ? (process.env.NEXT_PUBLIC_API_URL ?? "") : "";
+  typeof process !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL ?? '') : '';
 
-export const API_VERSION = "v1";
+export const API_VERSION = 'v1';
 export const API_BASE = `/api/${API_VERSION}`;
 
 /** localStorage key where the JWT is stored after a successful auth flow. */
-const JWT_STORAGE_KEY = "stellar_auth_token";
+const JWT_STORAGE_KEY = 'stellar_auth_token';
 
 /**
  * Persist a JWT so subsequent requests are automatically authenticated.
  * Call this after a successful /api/auth/verify response.
  */
 export function setAuthToken(token: string): void {
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     localStorage.setItem(JWT_STORAGE_KEY, token);
   }
 }
 
 /** Remove the stored JWT (e.g. on logout). */
 export function clearAuthToken(): void {
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     localStorage.removeItem(JWT_STORAGE_KEY);
   }
 }
 
 /** Read the current JWT from localStorage, or null if not present. */
 export function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   return localStorage.getItem(JWT_STORAGE_KEY);
 }
 
@@ -99,7 +103,7 @@ export async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
+  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
 
   // JWT interceptor — attach token when available
   const token = getAuthToken();
@@ -108,9 +112,9 @@ export async function apiFetch<T>(
     : {};
 
   const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "Accept-Version": API_VERSION,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'Accept-Version': API_VERSION,
     ...authHeader,
     ...(init.headers ?? {}),
   };
@@ -129,7 +133,7 @@ export async function apiFetch<T>(
     envelope = (await res.json()) as ApiResponse<T>;
   } catch {
     throw new ApiClientError(
-      "INTERNAL_SERVER_ERROR",
+      'INTERNAL_SERVER_ERROR',
       `Unexpected response format from ${path}`,
       undefined,
       res.status,
@@ -147,8 +151,8 @@ export async function apiFetch<T>(
 const requestCache = new Map<string, Promise<any>>();
 
 function getCacheKey(path: string, init?: RequestInit): string {
-  const method = init?.method || "GET";
-  const body = init?.body ? JSON.stringify(init.body) : "";
+  const method = init?.method || 'GET';
+  const body = init?.body ? JSON.stringify(init.body) : '';
   return `${method}:${path}:${body}`;
 }
 
@@ -178,9 +182,9 @@ export async function fetchCreators(params?: {
   search?: string;
 }): Promise<{ creators: Creator[]; total: number }> {
   const qs = new URLSearchParams();
-  if (params?.discipline) qs.set("discipline", params.discipline);
-  if (params?.search) qs.set("search", params.search);
-  const query = qs.toString() ? `?${qs}` : "";
+  if (params?.discipline) qs.set('discipline', params.discipline);
+  if (params?.search) qs.set('search', params.search);
+  const query = qs.toString() ? `?${qs}` : '';
   return dedupedFetch(`${API_BASE}/creators${query}`);
 }
 
@@ -200,8 +204,8 @@ export async function fetchCreatorReputation(
 export async function fetchCreatorReviewsBatch(
   creatorIds: string[],
 ): Promise<Record<string, { reviews: any[]; total: number }>> {
-  return apiFetch("/api/creators/reviews/batch", {
-    method: "POST",
+  return apiFetch('/api/creators/reviews/batch', {
+    method: 'POST',
     body: JSON.stringify({ creatorIds }),
   });
 }
@@ -210,8 +214,8 @@ export async function fetchCreatorReviewsBatch(
 export async function fetchCreatorReputationBatch(
   creatorIds: string[],
 ): Promise<Record<string, any>> {
-  return apiFetch("/api/creators/reputation/batch", {
-    method: "POST",
+  return apiFetch('/api/creators/reputation/batch', {
+    method: 'POST',
     body: JSON.stringify({ creatorIds }),
   });
 }
@@ -219,78 +223,36 @@ export async function fetchCreatorReputationBatch(
 /** GET /api/v1/creators/:id/reviews - Enhanced with filtering support */
 export async function fetchCreatorReviews(
   id: string,
-  filters?: {
-    minRating?: number;
-    maxRating?: number;
-    dateFrom?: string;
-    dateTo?: string;
-    verifiedOnly?: boolean;
-    sortBy?: "createdAt" | "rating" | "reviewerName";
-    sortOrder?: "asc" | "desc";
-    page?: number;
-    limit?: number;
-  },
-): Promise<{
-  creatorId: string;
-  aggregation: ReputationAggregation;
-  filteredAggregation?: ReputationAggregation;
-  reviews: {
-    reviews: PublicReview[];
-    totalCount: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-    hasNext: boolean;
-    hasPrev: boolean;
-  };
-  appliedFilters: any;
-}> {
+  filters?: ReviewFilterOptions,
+): Promise<FilteredCreatorReputationPayload> {
   const params = new URLSearchParams();
   if (filters) {
     Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") {
+      if (value !== undefined && value !== null && value !== '') {
         params.set(key, value.toString());
       }
     });
   }
-  const query = params.toString() ? `?${params}` : "";
+  const query = params.toString() ? `?${params}` : '';
   return apiFetch(`${API_BASE}/creators/${id}/reviews${query}`);
 }
 
 /** GET /api/v1/reviews - List all reviews with filtering */
-export async function fetchAllReviews(filters?: {
-  minRating?: number;
-  maxRating?: number;
-  dateFrom?: string;
-  dateTo?: string;
-  verifiedOnly?: boolean;
-  sortBy?: "createdAt" | "rating" | "reviewerName";
-  sortOrder?: "asc" | "desc";
-  page?: number;
-  limit?: number;
-}): Promise<{
-  reviews: {
-    reviews: PublicReview[];
-    totalCount: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-    hasNext: boolean;
-    hasPrev: boolean;
-  };
+export async function fetchAllReviews(filters?: ReviewFilterOptions): Promise<{
+  reviews: PaginatedReviews;
   overallAggregation: ReputationAggregation;
   filteredAggregation?: ReputationAggregation;
-  appliedFilters: any;
+  appliedFilters: ReviewFilterOptions;
 }> {
   const params = new URLSearchParams();
   if (filters) {
     Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") {
+      if (value !== undefined && value !== null && value !== '') {
         params.set(key, value.toString());
       }
     });
   }
-  const query = params.toString() ? `?${params}` : "";
+  const query = params.toString() ? `?${params}` : '';
   return apiFetch(`${API_BASE}/reviews${query}`);
 }
 
@@ -303,12 +265,12 @@ export async function fetchBounties(params?: {
   status?: string;
 }): Promise<PaginatedData<Bounty>> {
   const qs = new URLSearchParams();
-  if (params?.page) qs.set("page", String(params.page));
-  if (params?.limit) qs.set("limit", String(params.limit));
-  if (params?.category) qs.set("category", params.category);
-  if (params?.difficulty) qs.set("difficulty", params.difficulty);
-  if (params?.status) qs.set("status", params.status);
-  const query = qs.toString() ? `?${qs}` : "";
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.category) qs.set('category', params.category);
+  if (params?.difficulty) qs.set('difficulty', params.difficulty);
+  if (params?.status) qs.set('status', params.status);
+  const query = qs.toString() ? `?${qs}` : '';
   return apiFetch(`${API_BASE}/bounties${query}`);
 }
 
@@ -322,8 +284,8 @@ export async function fetchFreelancers(params?: {
   discipline?: string;
 }): Promise<{ freelancers: unknown[]; total: number }> {
   const qs = new URLSearchParams();
-  if (params?.discipline) qs.set("discipline", params.discipline);
-  const query = qs.toString() ? `?${qs}` : "";
+  if (params?.discipline) qs.set('discipline', params.discipline);
+  const query = qs.toString() ? `?${qs}` : '';
   return apiFetch(`${API_BASE}/freelancers${query}`);
 }
 
@@ -337,7 +299,7 @@ export async function submitReview(
   data: ReviewSubmission,
 ): Promise<{ reviewId: string }> {
   return apiFetch(`${API_BASE}/reviews`, {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(data),
   });
 }
@@ -347,7 +309,7 @@ export async function submitEscrowTransaction(
   data: EscrowTransactionRequest,
 ): Promise<EscrowTransactionResponse> {
   return apiFetch(`${API_BASE}/escrow/transaction`, {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(data),
   });
 }
@@ -358,7 +320,7 @@ export async function releaseEscrow(
   authorizerAddress: string,
 ): Promise<EscrowTransactionResponse> {
   return apiFetch(`${API_BASE}/escrow/${escrowId}/release`, {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify({ authorizerAddress }),
   });
 }
@@ -366,11 +328,11 @@ export async function releaseEscrow(
 // ── Webhook types ─────────────────────────────────────────────────────────────
 
 export type WebhookEventType =
-  | "payment_succeeded"
-  | "payment_failed"
-  | "payment_refunded"
-  | "dispute_opened"
-  | "dispute_resolved";
+  | 'payment_succeeded'
+  | 'payment_failed'
+  | 'payment_refunded'
+  | 'dispute_opened'
+  | 'dispute_resolved';
 
 export interface WebhookPayload {
   event_type: WebhookEventType;
@@ -396,8 +358,8 @@ export async function forwardPaymentWebhook(
   signature: string,
 ): Promise<WebhookAck> {
   return apiFetch(`${API_BASE}/webhooks/payment`, {
-    method: "POST",
-    headers: { "X-Webhook-Signature": signature },
+    method: 'POST',
+    headers: { 'X-Webhook-Signature': signature },
     body: JSON.stringify(payload),
   });
 }

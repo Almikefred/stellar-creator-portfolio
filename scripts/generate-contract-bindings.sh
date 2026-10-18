@@ -18,20 +18,29 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/packages/contracts-ts/src"
 WASM_DIR="$REPO_ROOT/backend/target/wasm32v1-none/release"
 STELLAR_JS="${STELLAR_JS:-pnpm --dir $REPO_ROOT exec stellar-js}"
-CONTRACTS=(bounty escrow freelancer governance)
+# name:cargo-package:wasm-file (cargo names the wasm after the package)
+CONTRACTS=(
+  bounty:stellar-bounty-contract:stellar_bounty_contract.wasm
+  escrow:stellar-escrow-contract:stellar_escrow_contract.wasm
+  freelancer:stellar-freelancer-contract:stellar_freelancer_contract.wasm
+  governance:stellar-governance-contract:stellar_governance_contract.wasm
+  identity:stellar-identity-contract:stellar_identity_contract.wasm
+  oracle:oracle:oracle.wasm
+)
 
 echo "🔨 Building contracts…"
 PKGS=()
-for c in "${CONTRACTS[@]}"; do PKGS+=(-p "stellar-${c}-contract"); done
+for entry in "${CONTRACTS[@]}"; do PKGS+=(-p "$(cut -d: -f2 <<<"$entry")"); done
 (cd "$REPO_ROOT/backend" && cargo build --release --target wasm32v1-none "${PKGS[@]}")
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-for c in "${CONTRACTS[@]}"; do
+for entry in "${CONTRACTS[@]}"; do
+  IFS=: read -r c _ wasm <<<"$entry"
   echo "🧬 Generating bindings for ${c}…"
   $STELLAR_JS generate \
-    --wasm "$WASM_DIR/stellar_${c}_contract.wasm" \
+    --wasm "$WASM_DIR/$wasm" \
     --contract-name "$c" \
     --output-dir "$TMP/$c" \
     --overwrite >/dev/null

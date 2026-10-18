@@ -4,9 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import {
-  Search, UserCheck, UserX, Trash2, ShieldCheck, ChevronDown,
+  Search, UserCheck, UserX, Trash2,
 } from 'lucide-react';
 import {
   changeUserRole,
@@ -15,14 +14,11 @@ import {
   deleteUser,
   getUsersSummary,
 } from '@/app/admin/actions';
+import { KYCReviewPanel } from '@/components/admin/kyc-review-panel';
 import { Role } from '@prisma/client';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const ROLES: Role[] = ['ADMIN', 'CLIENT', 'CREATOR', 'USER'];
-const STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-500/10 text-green-600 border-green-500/20',
-  suspended: 'bg-red-500/10 text-red-600 border-red-500/20',
-  pending: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-};
 
 interface AdminUser {
   id: string;
@@ -173,11 +169,12 @@ export default function AdminUsersPage() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-48">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search users..." className="pl-9 h-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Search size={15} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search users..." aria-label="Search users" className="pl-9 h-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <select
           className="h-9 px-3 rounded-md border border-input bg-background text-sm"
+          aria-label="Filter by role"
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
         >
@@ -186,6 +183,7 @@ export default function AdminUsersPage() {
         </select>
         <select
           className="h-9 px-3 rounded-md border border-input bg-background text-sm"
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -213,7 +211,7 @@ export default function AdminUsersPage() {
               <thead>
                 <tr className="border-b border-border text-muted-foreground text-xs">
                   <th className="px-4 py-3 text-left w-8">
-                    <input type="checkbox" onChange={(e) => setSelected(e.target.checked ? new Set(filtered.map((u) => u.id)) : new Set())} />
+                    <input type="checkbox" aria-label="Select all users" onChange={(e) => setSelected(e.target.checked ? new Set(filtered.map((u) => u.id)) : new Set())} />
                   </th>
                   <th className="px-4 py-3 text-left">User</th>
                   <th className="px-4 py-3 text-left">Role</th>
@@ -225,13 +223,21 @@ export default function AdminUsersPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading...</td></tr>
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} className="border-b border-border">
+                      {Array.from({ length: 7 }).map((__, j) => (
+                        <td key={j} className="px-4 py-3">
+                          <div className="h-4 bg-muted rounded animate-pulse" style={{ width: j === 1 ? '80%' : '60%' }} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">No users found</td></tr>
                 ) : filtered.map((user) => (
                   <tr key={user.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3">
-                      <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggleSelect(user.id)} />
+                      <input type="checkbox" aria-label={`Select ${user.name}`} checked={selected.has(user.id)} onChange={() => toggleSelect(user.id)} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{user.name}</div>
@@ -240,6 +246,7 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <select
                         className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5"
+                        aria-label={`Change role for ${user.name}`}
                         value={user.role}
                         onChange={(e) => handleChangeRole(user, e.target.value as Role)}
                       >
@@ -247,9 +254,7 @@ export default function AdminUsersPage() {
                       </select>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${STATUS_COLORS[user.status]}`}>
-                        {user.status}
-                      </span>
+                      <StatusBadge status={user.status} />
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{user.joinedAt}</td>
                     <td className="px-4 py-3">{user.bounties}</td>
@@ -257,15 +262,15 @@ export default function AdminUsersPage() {
                       <div className="flex items-center gap-1">
                         {user.status === 'suspended' ? (
                           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleUnsuspendUser(user)}>
-                            <UserCheck size={12} /> Activate
+                            <UserCheck size={12} aria-hidden="true" /> Activate
                           </Button>
                         ) : (
                           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSuspendUser(user)}>
-                            <UserX size={12} /> Suspend
+                            <UserX size={12} aria-hidden="true" /> Suspend
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => handleDeleteUser(user)}>
-                          <Trash2 size={12} />
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => handleDeleteUser(user)} aria-label={`Delete ${user.name}`} title={`Delete ${user.name}`}>
+                          <Trash2 size={12} aria-hidden="true" />
                         </Button>
                       </div>
                     </td>
@@ -276,6 +281,8 @@ export default function AdminUsersPage() {
           </div>
         </CardContent>
       </Card>
+
+      <KYCReviewPanel />
     </div>
   );
 }

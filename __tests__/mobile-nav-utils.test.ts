@@ -46,7 +46,7 @@ describe('collectFocusableElements', () => {
   })
 
   it('skips tabindex=-1', () => {
-    document.body.innerHTML = `<div id="box"><button tabindex="-1">x</button><a href="/">y</a></div>`
+    document.body.innerHTML = '<div id="box"><button tabindex="-1">x</button><a href="/">y</a></div>'
     const box = document.getElementById('box')
     const els = collectFocusableElements(box)
     expect(els).toHaveLength(1)

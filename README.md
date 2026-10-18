@@ -1,613 +1,370 @@
-# Stellar Platform: Creator Portfolio, Bounty Marketplace & Freelancing Hub
+# Tamgora
 
-A world-class platform connecting exceptional non-technical tech professionals across design, writing, marketing, product management, and 15+ other disciplines with opportunities, clients, and collaborators.
+A full-stack platform connecting non-technical tech professionals (designers, writers, marketers, PMs) with bounties, clients, and collaborators — powered by Stellar/Soroban smart contracts.
 
-## Overview
+## Live Contracts — Stellar Testnet
 
-Stellar is a comprehensive ecosystem designed specifically for non-technical talent in the tech industry. Whether you're a designer, writer, marketer, product manager, or specialist in any creative or strategic discipline, Stellar provides the infrastructure to showcase your work, discover opportunities, and grow your career.
+The canonical contracts (`backend/contracts/`: `bounty`, `escrow`, `freelancer`,
+`governance`, `oracle`, `identity`) are built, tested, and deployed to testnet
+automatically by CI on every push to `main`
+([`deploy-contracts.yml`](.github/workflows/deploy-contracts.yml)). Each deploy
+commits the current addresses and WASM hashes to
+**[`deployments/testnet.json`](./deployments/testnet.json)**, which the app reads.
+See [`docs/deployments.md`](./docs/deployments.md) for the schema and runbook.
 
-### Key Features
+The table below is a one-time manual testnet deployment of the **legacy
+top-level** `contracts/` tree. That tree has since been archived (see the note
+below). These contracts are still live as of this writing, but nothing in the
+platform integrates against them:
 
-- **Creator Portfolios**: Showcase your work with beautiful, customizable profiles featuring projects, testimonials, and social integration
-- **Bounty Marketplace**: Post and apply for short-term, high-impact projects with transparent budgeting and timelines
-- **Freelancer Directory**: Browse and hire verified professionals across 15+ non-technical tech disciplines
-- **Advanced Filtering**: Find exactly what you need with powerful search, filtering by discipline, experience level, and skills
-- **Direct Networking**: Connect directly with professionals via LinkedIn and Twitter integration
-- **Dark/Light Mode**: Beautiful, responsive design optimized for all devices with automatic theme switching
+| Contract | Address |
+|---|---|
+| Escrow (`contracts/escrow`, legacy) | `CDDVR4DXPPYYH43OVBVUVK2V7A4NPNN6DAJJ7QFPRB53LMK3XK4U4D76` |
+| Vault | `CA23KXIQGCGMBITUT7IZCTQWMMO3A2PDIZXCL4FS7KZHS6FEMGUY4Y6U` |
+| AMM | `CD2733NB3EKZQFS7BDFWVS4W7QOQ4IX5EVY5PTPCHLPMRBW7UBSPWFHD` |
+| Analytics | `CAZNWED5SCKMPIOSU274DCHLFRGGFZLQNMCWXWNAO3HF5RY2PMPIODWA` |
+
+View on [Stellar Expert (testnet)](https://stellar.expert/explorer/testnet).
+
+Network passphrase: `Test SDF Network ; September 2015`
 
 ## Tech Stack
 
-### Frontend
-- **Framework**: Next.js 16 (App Router)
-- **Styling**: Tailwind CSS v4
-- **UI Components**: Shadcn/ui
-- **Icons**: Lucide React
-- **Theme Management**: next-themes
-- **Language**: TypeScript
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui |
+| Auth | NextAuth.js |
+| Database | PostgreSQL via Prisma ORM (Supabase recommended) |
+| Smart Contracts | Rust + Soroban SDK 23.5.3 (`backend/contracts/`), one SDK version across the repo |
+| Rust API | Actix-web |
+| Mobile | React Native (Expo) |
+| Payments | Stripe |
+| Storage | AWS S3 |
+| Monitoring | Sentry, OpenTelemetry |
 
-### Backend & Smart Contracts
-- **Blockchain**: Stellar Network & Soroban
-- **Smart Contracts**: Rust + Soroban SDK
-- **API**: Rust + Actix-web
-- **Database**: PostgreSQL (extensible)
-- **Cache**: Redis
-- **Event Indexing**: Custom Rust indexer
-
-### Smart Contracts
-1. **Bounty Contract** - Manages bounty creation, applications, and completion
-2. **Escrow Contract** - Secure payment handling with milestone-based releases
-3. **Freelancer Registry** - Profile management, ratings, and verification
-4. **Governance Contract** - Platform fees, parameters, and DAO voting
-
-All contracts live in `backend/contracts/` and build against a single Soroban SDK
-version (`soroban-sdk = "23.5.3"`, pinned in `backend/Cargo.toml`). The legacy
-top-level `contracts/` tree (`amm`, `analytics`, `core`, `vault`) was archived:
-it was never built or deployed, and it pinned older SDKs. To recover it, see git
-history before its removal, e.g. `git show 552a0cf:contracts/amm/src/lib.rs`.
-
-**Deployed addresses:** [`deployments/testnet.json`](./deployments/testnet.json)
-(see [docs/deployments.md](./docs/deployments.md) for the schema and runbook).
-**TypeScript clients:** generated into [`packages/contracts-ts`](./packages/contracts-ts/README.md).
+**TypeScript clients** for the contracts are generated into
+[`packages/contracts-ts`](./packages/contracts-ts/README.md).
 
 ## Project Structure
 
 ```
-stellar-platform/
-├── app/                         # Next.js 16 Frontend
-│   ├── page.tsx                 # Landing page
-│   ├── layout.tsx               # Root layout with theme provider
-│   ├── globals.css              # Global styles & design tokens
-│   ├── creators/
-│   │   ├── page.tsx             # Creator directory with filtering
-│   │   └── [id]/
-│   │       ├── layout.tsx       # Creator profile layout
-│   │       └── page.tsx         # Individual creator profile
-│   ├── freelancers/
-│   │   └── page.tsx             # Freelancer directory & hire interface
-│   ├── bounties/
-│   │   └── page.tsx             # Bounty marketplace with filters
-│   └── about/
-│       └── page.tsx             # About & mission page
-├── components/
-│   ├── header.tsx               # Navigation & theme toggle
-│   ├── footer.tsx               # Footer with links & social
-│   ├── creator-card.tsx         # Creator profile card component
-│   ├── project-card.tsx         # Project showcase card
-│   └── ui/                      # Shadcn/ui components
-├── lib/
-│   └── creators-data.ts         # Sample data, types, and utilities
-├── public/
-│   ├── avatars/                 # Creator avatars
-│   ├── covers/                  # Creator cover images
-│   └── projects/                # Project showcase images
-│
-└── backend/                     # Soroban Smart Contracts & Rust Services
-    ├── contracts/              # Soroban smart contracts
-    │   ├── bounty/            # Bounty management contract
-    │   ├── escrow/            # Payment escrow contract
-    │   ├── freelancer/        # Freelancer registry & ratings
-    │   └── governance/        # Platform governance
-    ├── services/              # Rust backend services
-    │   ├── api/              # REST API service (Actix-web)
-    │   ├── auth/             # Authentication service
-    │   ├── notifications/    # Notification service
-    │   └── indexer/          # Blockchain event indexer
-    ├── Cargo.toml            # Rust workspace configuration
-    ├── docker-compose.yml    # Full stack orchestration
-    └── README.md             # Backend documentation
+├── app/              # Next.js App Router: pages and API routes only
+├── components/       # React components, grouped by feature
+│   ├── ui/           #   shadcn/ui primitives
+│   ├── layout/       #   header, footer, sidebars, layout provider
+│   ├── providers/    #   app-wide context providers (tRPC, session, i18n, motion)
+│   └── <feature>/    #   bounties, reviews, payments, wallet, analytics, ...
+├── hooks/            # React hooks
+├── lib/              # Framework-agnostic helpers, clients and data access
+│   ├── db/           #   Prisma + Supabase clients, locking, transactions
+│   ├── payments/     #   Stripe, escrow state machine, payment validation
+│   ├── storage/      #   S3 object storage, Redis, upload validation
+│   └── utils/        #   formatting, validation, class-name helpers
+├── server/           # Server-only TypeScript used by the API routes
+│   ├── api/          #   tRPC router, context, rate limiting
+│   ├── graphql/      #   GraphQL schema, resolvers, context
+│   ├── services/     #   audit log, events, KMS, tracing, notifications
+│   ├── stellar/      #   Stellar RPC client, contract calls, Soroban indexer
+│   └── realtime/     #   standalone websocket servers (collab, signalling)
+├── prisma/           # Database schema & migrations
+├── __tests__/        # Vitest suites (others sit beside the code they test)
+├── e2e/              # Playwright specs
+├── contracts/        # Legacy Soroban contracts (see note below)
+│   ├── escrow/       #   Payment escrow with milestone releases
+│   ├── vault/        #   Multi-vault batch withdrawal
+│   ├── amm/          #   Constant-product AMM (x*y=k)
+│   ├── analytics/    #   On-chain event analytics
+│   └── core/         #   Dispute arbitration, storage TTL, simulation
+├── backend/          # Rust workspace: API services
+│   └── contracts/    #   Canonical Soroban contracts (see note below)
+├── mobile/           # React Native app (Expo), with its own toolchain
+├── infrastructure/   # Kubernetes, monitoring and AWS configuration
+├── helm/             # Helm charts
+├── load-tests/       # k6 scenarios
+├── scripts/          # Build, deploy and setup scripts
+├── docs/             # Backlog, implementation and maintenance notes
+└── .husky/           # Git hooks (TS check, secret scan, size limit)
 ```
 
-## Core Data Models
+> **Legacy `contracts/` tree (archived):** all Soroban contracts live in
+> `backend/contracts/`, the workspace in `backend/Cargo.toml`, and build against
+> a single `soroban-sdk = "23.5.3"`. The old top-level `contracts/` tree (`amm`,
+> `analytics`, `core`, `escrow`, `vault`) pinned soroban-sdk 21.7.7. No workspace
+> or CI job built it, so it was removed rather than upgraded. Its source,
+> including `amm`, `vault` and `analytics`, which have no `backend/contracts/`
+> equivalent and back the legacy testnet addresses above, is preserved in git
+> history at commit `734cff58`
+> (e.g. `git show 734cff58:contracts/vault/src/lib.rs`). To revive one, port it
+> into `backend/contracts/` against SDK 23.
 
-### Creator
-```typescript
-interface Creator {
-  id: string;
-  name: string;
-  title: string;
-  discipline: string;
-  bio: string;
-  avatar: string;
-  coverImage: string;
-  tagline: string;
-  linkedIn: string;
-  twitter: string;
-  portfolio?: string;
-  projects: Project[];
-  skills: string[];
-  stats: {
-    projects: number;
-    clients: number;
-    experience: number;
-  };
-  services?: Service[];
-  hourlyRate?: number;
-  responseTime?: string;
-  availability?: 'available' | 'limited' | 'unavailable';
-  rating?: number;
-  reviewCount?: number;
-}
+See [`docs/architecture.md`](./docs/architecture.md) for a platform-wide
+diagram of how the Next.js app, tRPC/GraphQL/REST, the Rust API, realtime
+servers, Soroban contracts, mobile app, and their data stores fit together.
+
+## Observability
+
+### Structured logging
+
+Server code (`app/api/`, `server/`) uses the structured logger in `lib/logger.ts`
+instead of `console.log`. Every log line is a JSON object with `time`, `level`,
+`msg`, and — when inside a request — `requestId`:
+
+```ts
+import { logger } from '@/lib/logger';
+logger.info('KYC cleanup complete', { deleted: count });
+logger.error('Failed to index creator', { creatorId, err: String(err) });
 ```
 
-### Bounty
-```typescript
-interface Bounty {
-  id: string;
-  title: string;
-  description: string;
-  budget: number;
-  currency: string;
-  deadline: Date;
-  difficulty: 'beginner' | 'intermediate' | 'advanced' | 'expert';
-  category: string;
-  tags: string[];
-  applicants: number;
-  status: 'open' | 'in-progress' | 'completed' | 'cancelled';
-  requiredSkills: string[];
-  deliverables: string;
-}
+Set the `LOG_LEVEL` environment variable to `debug | info | warn | error`
+(defaults to `debug` in development, `info` in production).
+
+### Request IDs
+
+Every inbound HTTP request is assigned an `x-request-id`:
+
+- The middleware reads an existing `x-request-id` header from trusted upstream
+  proxies (e.g. Vercel, Cloudflare); if absent, a UUID v4 is generated.
+- The ID is echoed back in the response `x-request-id` header.
+- The ID is stored in `AsyncLocalStorage` for the lifetime of the request, so
+  the logger and Sentry scope include it automatically — no prop-drilling.
+
+Wrap a Next.js Route Handler:
+
+```ts
+import { withRequestId } from '@/lib/request-id-middleware';
+
+export const GET = withRequestId(async (req) => {
+  return NextResponse.json({ ok: true });
+});
 ```
 
-### Service
-```typescript
-interface Service {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  basePrice: number;
-  deliveryTime: number; // in days
-  rating: number;
-  reviewCount: number;
-}
-```
-
-## Supported Disciplines
-
-Stellar supports talent across 15+ non-technical tech fields:
-
-- **Creative & Design**: UI/UX Design, Brand Strategy
-- **Content**: Writing, Content Creation
-- **Growth & Marketing**: Marketing, Community Management, Brand Strategy
-- **Product & Operations**: Product Management, Project Management, Business Development
-- **Data & Analytics**: Data Analysis
-- **Revenue & Sales**: Sales, Customer Success
-- **People & Legal**: HR & Recruiting, Legal & Compliance
-
-## Design System
-
-### Color Palette
-
-**Light Mode:**
-- Primary: Deep Indigo-Blue (oklch(0.35 0.15 250)) - Trust & Professionalism
-- Accent: Vibrant Teal (oklch(0.6 0.15 200)) - CTAs & Highlights
-- Secondary: Soft Slate (oklch(0.5 0.05 240)) - Supporting Elements
-- Muted: Light Grays (oklch(0.92 0 0)) - Subtle Elements
-
-**Dark Mode:**
-- Primary: Bright Indigo (oklch(0.65 0.18 255))
-- Accent: Bright Cyan-Teal (oklch(0.7 0.18 190))
-- Secondary: Soft Grayish-Blue (oklch(0.35 0.08 240))
-- Muted: Dark Grays (oklch(0.28 0.02 240))
-
-### Typography
-
-- **Heading Font**: Geist (sans-serif)
-- **Body Font**: Geist (sans-serif)
-- **Line Height**: 1.4-1.6 (leading-relaxed)
-
-### Spacing & Layout
-
-- Uses Tailwind's spacing scale (4px base unit)
-- Responsive breakpoints: sm (640px), md (768px), lg (1024px)
-- Flexbox-first approach for layouts
-- Max-width container: 7xl (80rem)
+The `x-request-id` value appears in every Sentry event (`request_id` tag) and
+in every structured log line (`requestId` field), making it trivial to
+correlate a client error with server-side logs.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+ (recommended 20+)
-- npm, pnpm, yarn, or bun
+- Node.js 20+
+- pnpm 10+ (the repo pins `pnpm@10.33.0` via `packageManager`; `corepack enable` picks it up automatically)
+- Rust 1.74+ (the workspace MSRV pinned in `backend/Cargo.toml`) + `wasm32v1-none` target:
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  rustup target add wasm32v1-none
+  ```
+- Stellar CLI 27+ (includes Soroban contract CLI):
+  ```bash
+  cargo install --locked stellar-cli
+  stellar --version  # verify: should show v27.0.0 or higher
+  ```
+  The `--locked` flag ensures reproducible builds by using the exact dependency versions from the lockfile.
+- PostgreSQL 16+ (or a Supabase project) — a Docker Compose file is included
+  for local development, see [Database setup](#database-setup) below
 
-### Installation
+### Frontend
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/stellar-platform.git
-   cd stellar-platform
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pnpm install
-   # or npm install / yarn install / bun install
-   ```
-
-3. **Run development server**
-   ```bash
-   pnpm dev
-   ```
-
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-4. **Build for production**
-   ```bash
-   pnpm build
-   pnpm start
-   ```
-
-## Customization
-
-### Adding New Creators
-
-Edit `/lib/creators-data.ts` and add entries to the `creators` array:
-
-```typescript
-{
-  id: 'unique-id',
-  name: 'Creator Name',
-  title: 'Professional Title',
-  discipline: 'UI/UX Design', // or any supported discipline
-  bio: 'Brief bio about the creator...',
-  avatar: '/avatars/image.jpg',
-  coverImage: '/covers/image.jpg',
-  tagline: 'Catchy tagline',
-  linkedIn: 'https://linkedin.com/in/username',
-  twitter: 'https://x.com/username',
-  skills: ['Skill 1', 'Skill 2', 'Skill 3'],
-  stats: {
-    projects: 25,
-    clients: 10,
-    experience: 5,
-  },
-  projects: [...],
-}
+```bash
+pnpm install
+cp .env.example .env.local
+pnpm dev                      # http://localhost:3000
+pnpm build                    # production build
 ```
 
-### Adding New Bounties
+### Environment variables
 
-Edit `/lib/creators-data.ts` and add entries to the `bounties` array:
+`.env.example` holds around 70 variables covering every integration the project
+can use. **You do not need most of them to run the app locally.** Copy it, then
+fill in the five below; everything else can stay at its placeholder until you
+touch the feature that needs it.
 
-```typescript
-{
-  id: 'bounty-id',
-  title: 'Bounty Title',
-  description: 'Detailed description...',
-  budget: 2000,
-  currency: 'USD',
-  deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-  difficulty: 'intermediate',
-  category: 'Brand Strategy',
-  tags: ['tag1', 'tag2'],
-  applicants: 5,
-  status: 'open',
-  requiredSkills: ['Skill 1', 'Skill 2'],
-  deliverables: 'List of deliverables...',
-}
+#### The five you must set
+
+| Variable | What to put in it |
+|---|---|
+| `DATABASE_URL` | Postgres connection string used for runtime queries. Against the bundled Docker Postgres: `postgresql://postgres:postgres@localhost:6432/stellar_portfolio?schema=public&pgbouncer=true&connection_limit=1` |
+| `DIRECT_DATABASE_URL` | Same database, **direct port, no pooler** — Prisma Migrate only: `postgresql://postgres:postgres@localhost:5432/stellar_portfolio?schema=public` |
+| `NEXTAUTH_SECRET` | Any high-entropy string. Generate one with the command below. |
+| `NEXTAUTH_URL` | `http://localhost:3000` in development. Must match the origin you actually browse to, or OAuth callbacks fail. |
+| `NEXT_PUBLIC_STELLAR_NETWORK` | `testnet` for local work. Only set `mainnet` when deploying against real funds. |
+
+Generate the auth secret:
+
+```bash
+openssl rand -base64 32
+# → 7Qw1kZ9m0uP4rT8vX2yB5nC6dF3gH1jK4lM7oR0sU9w=
 ```
 
-### Updating Design Tokens
+Paste that value into `NEXTAUTH_SECRET` in `.env.local`.
 
-Edit `/app/globals.css` to customize the color scheme, spacing, and other design variables:
+#### Two things that catch people out
 
-```css
-:root {
-  --primary: oklch(0.35 0.15 250);
-  --accent: oklch(0.6 0.15 200);
-  /* ... more tokens ... */
-}
+**`DATABASE_URL` and `DIRECT_DATABASE_URL` are not interchangeable.** The first
+goes through PgBouncer on port **6432** for application queries; the second must
+bypass the pooler on port **5432** because Prisma Migrate needs a session-mode
+connection. Pointing both at the same port produces migrations that hang or fail
+with prepared-statement errors.
+
+**`NEXT_PUBLIC_*` variables are baked in at build time,** not read at runtime.
+Changing one means restarting `pnpm dev` (or rebuilding); editing `.env.local`
+alone will not pick it up. This is also why `NEXT_PUBLIC_GOOGLE_SIGNIN_ENABLED`
+exists as a separate flag — a client bundle cannot read the server-only
+`GOOGLE_CLIENT_ID`, so that mirror has to be kept in sync by hand.
+
+#### Optional groups
+
+Leave these alone unless you are working on the feature in question. Each is
+commented in `.env.example` with what it does:
+
+| Group | Variables | Needed for |
+|---|---|---|
+| Supabase | `NEXT_PUBLIC_SUPABASE_*`, `SUPABASE_SERVICE_ROLE_KEY` | Supabase-hosted Postgres and storage |
+| Google sign-in | `GOOGLE_CLIENT_*`, `NEXT_PUBLIC_GOOGLE_SIGNIN_ENABLED`, `EXPO_PUBLIC_GOOGLE_*` | "Continue with Google" on web and mobile |
+| Stellar RPC | `NEXT_PUBLIC_STELLAR_RPC_*` | Overriding the default testnet/mainnet RPC endpoints |
+| Contracts | `CONTRACT_ID`, `STELLAR_ADMIN_SECRET` | On-chain escrow and the KYC review flow |
+| Key management | `KMS_PROVIDER`, `KMS_SECRET_PREFIX` | Defaults to `env` locally; `aws` pulls from Secrets Manager |
+| Storage | `AWS_*` | S3 uploads |
+| Payments | `STRIPE_*` | Stripe checkout and webhooks |
+
+#### Check it worked
+
+```bash
+pnpm exec prisma migrate deploy   # exits 0 once DATABASE_URL/DIRECT_DATABASE_URL are right
+pnpm exec prisma generate
+pnpm dev
 ```
 
-## Pages & Routes
+`pnpm dev` should print `Ready in …` and serve <http://localhost:3000>. A crash
+on boot naming a missing variable means that one still holds its placeholder.
 
-| Route | Description |
-|-------|-------------|
-| `/` | Landing page with hero, featured creators, and benefits |
-| `/creators` | Directory of all creators with discipline filtering |
-| `/creators/[id]` | Individual creator portfolio with projects & CTA |
-| `/freelancers` | Browse freelancers by discipline with search |
-| `/bounties` | Bounty marketplace with difficulty & category filters |
-| `/about` | About page with mission and platform info |
+### Database setup
 
-## Features in Detail
+#### Option A — Local Postgres via Docker (recommended)
 
-### Creator Directory (`/creators`)
-- Grid layout with responsive cards
-- Filter by discipline (15+ available)
-- View creator stats (projects, clients, experience)
-- Quick access to social profiles
-- Click-through to full portfolio
+The fastest way to get a working database is the included Docker Compose file.
+It starts Postgres 16, PgBouncer, and (optionally) pgAdmin in a single command.
 
-### Creator Profile (`/creators/[id]`)
-- Hero banner with cover image
-- Creator bio and tagline
-- Skills showcase
-- Complete project portfolio with descriptions
-- CTA for collaboration
-- Direct links to LinkedIn and Twitter profiles
+```bash
+cd backend
+docker compose up -d postgres   # starts Postgres + PgBouncer
+docker compose ps               # verify: postgres should show "healthy"
+```
 
-### Freelancer Directory (`/freelancers`)
-- Advanced search by name, skills, or expertise
-- Filter by discipline
-- View availability and response times (extendable)
-- Service packages and rates (extendable)
-- Direct hiring CTAs
+Once running, set these two variables in `.env.local` (the values match the
+Docker Compose defaults exactly):
 
-### Bounty Marketplace (`/bounties`)
-- Browse open bounties with full details
-- Filter by difficulty level and category
-- View budget, timeline, and required skills
-- See application count and status
-- Apply directly or post new bounties
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:6432/stellar_portfolio?schema=public&pgbouncer=true&connection_limit=1"
+DIRECT_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/stellar_portfolio?schema=public"
+```
 
-### About Page (`/about`)
-- Mission statement and platform values
-- Impact metrics
-- How the platform works
-- Community guidelines
-- Contact information
+| Variable | Port | Purpose |
+|---|---|---|
+| `DATABASE_URL` | 6432 (PgBouncer) | Application runtime queries — connection-pooled |
+| `DIRECT_DATABASE_URL` | 5432 (Postgres) | Prisma Migrate only — must bypass PgBouncer |
 
-## Performance Optimizations
+> **Why two ports?** PgBouncer on 6432 multiplexes connections for efficiency,
+> but Prisma Migrate needs a raw session-mode connection, so it must hit the
+> direct port 5432. Pointing both at the same port causes migrations to hang
+> or fail with prepared-statement errors.
 
-- Next.js Image Optimization
-- Theme preference detection (system, light, dark)
-- Sticky header with blur effect
-- Smooth transitions and animations
-- Responsive images and typography
-- Mobile-first design approach
+#### Option B — Supabase or external Postgres
 
-## Accessibility
+If you already have a Postgres instance (Supabase, Neon, etc.), use the
+connection strings from your provider's dashboard. You still need **two**
+URLs — a pooled one for runtime and a direct one for migrations — even if
+your provider exposes only a single port.
 
-- Semantic HTML structure
-- ARIA labels for interactive elements
-- Proper heading hierarchy
-- Color contrast compliance (WCAG AA standard)
-- Keyboard navigation support
-- Screen reader friendly
+#### Running migrations and generating the client
 
-## Future Enhancements
+```bash
+pnpm exec prisma migrate deploy   # applies pending migrations
+pnpm exec prisma generate          # generates Prisma Client
+```
 
-### Planned Features
-- [ ] User authentication & accounts
-- [ ] Creator dashboard for managing profiles
-- [ ] Bounty application system with messaging
-- [ ] Payment integration
-- [ ] Reviews and ratings system
-- [ ] Advanced search with saved filters
-- [ ] Creator verification badges
-- [ ] Portfolio analytics
-- [ ] Email notifications
-- [ ] Social sharing capabilities
-- [ ] API for integrations
-- [ ] Admin dashboard
+You should see output similar to:
 
-### Database Integration
-Currently using JSON data, but easily extensible to:
-- Supabase (PostgreSQL + Auth)
-- MongoDB
-- Firebase
-- Prisma ORM
+```
+Applying migration(s) ...
+Database migration(s) applied successfully
+```
 
-### Real-time Features
-- Live notifications for new bounties
-- Chat/messaging between creators and clients
-- Real-time application updates
-- Live bidding for bounties
+If `migrate deploy` fails with `connection refused` or `password auth failed`,
+double-check that your Postgres instance is running and the credentials in
+`.env.local` match.
+
+#### Seeding demo data (optional)
+
+```bash
+pnpm exec prisma db seed
+```
+
+Expected output on success:
+
+```
+Seeded 2 demo users, 2 profiles, and 1 demo bounty.
+```
+
+The seed script creates `creator@example.com`, `client@example.com`, their
+matching profiles, and an open design bounty. Records use stable IDs and
+`upsert`, so rerunning is safe and never duplicates data. Seeding is for
+local development only — verify `.env.local` points to your local database
+before running it.
+
+### Smart Contracts
+
+Build and deploy contracts to testnet:
+
+```bash
+cd contracts/escrow
+stellar contract build           # produces wasm32v1-none WASM
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/escrow.wasm \
+  --source <your-key-name> \
+  --network testnet
+```
+
+Set the returned contract ID as `CONTRACT_ID` in your `.env.local`.
+
+## Key Features
+
+- **Creator Portfolios** — customizable profiles with projects, testimonials, and social links
+- **Bounty Marketplace** — post and apply for short-term projects with on-chain escrow payments
+- **Freelancer Directory** — search across 15+ non-technical tech disciplines
+- **On-chain Escrow** — milestone-based fund releases via Soroban contracts
+- **AMM** — constant-product swap pool for platform tokens
+- **Mobile App** — React Native (Expo) companion with infinite scroll, haptics, and offline support
+- **Dark/Light Mode** — system-aware theme with manual override
+
+## Supported Disciplines
+
+UI/UX Design · Brand Strategy · Writing · Content Creation · Marketing · Community Management · Product Management · Project Management · Business Development · Data Analysis · Sales · Customer Success · HR & Recruiting · Legal & Compliance
 
 ## Deployment
 
-### Deploy to Vercel
+The app uses `output: 'standalone'` (Next.js) and can be deployed to:
 
-1. Push code to GitHub
-2. Import repository on [Vercel](https://vercel.com)
-3. Deploy automatically on every push
-
-```bash
-vercel --prod
-```
-
-### Deploy Elsewhere
-
-Works with any Node.js hosting:
-- Netlify
-- AWS Amplify
-- Railway
-- Render
-- DigitalOcean
-
-```bash
-pnpm build
-NODE_ENV=production pnpm start
-```
-
-## Environment Variables
-
-Currently, no environment variables are required for the base installation. Future integrations may require:
-
-```env
-DB_ENGINE=postgresql   # Production default: postgresql. Use sqlite for local/test.
-DATABASE_URL=          # PostgreSQL URL in production; sqlite:./stellar.db for local SQLite
-NEXT_PUBLIC_API_URL=   # For API endpoints
-AUTH_SECRET=           # For authentication
-STRIPE_API_KEY=        # For payments
-```
-
-Production deployments should provision PostgreSQL and set `DATABASE_URL` to a
-`postgres://` or `postgresql://` connection string. SQLite remains supported for
-local development and tests by setting `DB_ENGINE=sqlite` or using a
-`sqlite:` database URL.
-
-## API Routes (Extensible)
-
-Structure for future API routes:
-
-```
-/api/
-  ├── creators/
-  │   ├── route.ts        # GET /api/creators
-  │   └── [id]/route.ts   # GET /api/creators/[id]
-  ├── bounties/
-  │   ├── route.ts        # GET/POST bounties
-  │   └── [id]/route.ts   # GET bounty details
-  ├── applications/
-  │   └── route.ts        # POST new applications
-  └── auth/
-      └── route.ts        # Authentication endpoints
-```
+- **Vercel** — import the repo, add env vars, deploy
+- **Railway / Render / Fly.io** — use the standalone output
+- **Docker** — `docker build` with the generated Dockerfile in `.next/standalone`
 
 ## Contributing
 
-Contributions are welcome! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Fork → feature branch → PR against `main`
+2. The pre-commit hook runs TypeScript check (warning), secret scan (gitleaks, if installed), and a 10 MB file-size guard
+3. Soroban contracts require `overflow-checks = true` in `[profile.release]`
+4. Looking for open work? [`docs/IMPLEMENTATION_NOTES.md`](./docs/IMPLEMENTATION_NOTES.md) tracks partially-scoped backlog items (e.g. STT integration, escrow slippage protection, OCR KYC) with implementation specs already written out
+5. Deploying or upgrading a Soroban contract? See [`docs/contracts.md`](./docs/contracts.md) for how CI deploys to Testnet/Mainnet, where the resulting contract addresses go, and how to upgrade a live contract safely
+6. Restoring the database or running the quarterly restore drill? Follow [`docs/POSTGRES_RESTORE_RUNBOOK.md`](./docs/POSTGRES_RESTORE_RUNBOOK.md)
+7. Freelancer payouts and receipt generation: See [`docs/PAYMENTS.md`](./docs/PAYMENTS.md)
+8. Running integration tests against a Docker PostgreSQL instance: See [`docs/TEST_DATABASE.md`](./docs/TEST_DATABASE.md)
+9. Playwright multi-context messaging E2E tests: See [`e2e/README.md`](./e2e/README.md)
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT
 
-## Support
+## Handsoff notes
 
-For issues, questions, or suggestions:
-
-- Open an issue on GitHub
-- Contact via LinkedIn
-- Email: support@stellar.dev
-
-## Acknowledgments
-
-- Built with Next.js 16 and modern web technologies
-- Design inspired by world-class creator platforms
-- Icons from Lucide React
-- UI components from shadcn/ui
-- Color system from OKLCH color space
-
-## Backend Services
-
-The backend provides robust Soroban smart contracts and a Rust-based REST API for seamless frontend integration.
-
-### Smart Contracts
-Located in `backend/contracts/`, these Soroban contracts run on the Stellar blockchain:
-
-**Bounty Contract** - Core bounty functionality
-- Create bounties with budget and timeline
-- Accept freelancer applications
-- Track bounty status (open, in-progress, completed, disputed, cancelled)
-- Manage freelancer selection
-
-**Escrow Contract** - Secure payments
-- Hold funds in escrow during project execution
-- Release funds on milestones or timelock
-- Refund capabilities for disputes
-- Multi-condition release mechanisms
-
-**Freelancer Contract** - Talent management
-- Register and manage freelancer profiles
-- Track ratings and review history
-- Maintain verified status badges
-- Aggregate earnings and project history
-
-**Governance Contract** - Platform management
-- Configure platform fees
-- Set bounty budget limits
-- Voting mechanism for proposals
-- Treasury management
-
-### API Service
-REST API built with Actix-web for frontend integration:
-
-```bash
-# Run API server
-cd backend
-cargo run --bin stellar-api
-
-# API will be available at http://localhost:3001
-```
-
-**Key Endpoints:**
-- `POST /api/bounties` - Create bounty
-- `GET /api/bounties` - List bounties with filters
-- `POST /api/bounties/:id/apply` - Apply for bounty
-- `POST /api/freelancers/register` - Register freelancer
-- `GET /api/freelancers` - List freelancers
-- `POST /api/escrow/:id/release` - Release escrowed funds
-
-### Running Full Backend Stack
-
-```bash
-# Start all services with Docker Compose
-cd backend
-docker-compose up
-
-# Services will be available:
-# - API: http://localhost:3001
-# - pgAdmin: http://localhost:5050 (admin/admin)
-# - PostgreSQL: localhost:5432
-# - Redis: localhost:6379
-```
-
-PostgreSQL is the production database. For local-only API experiments or tests,
-use SQLite explicitly:
-
-```bash
-DB_ENGINE=sqlite DATABASE_URL=sqlite:./stellar.db cargo run --bin stellar-api
-```
-
-### Backend Development
-
-```bash
-# Build all contracts
-cd backend
-cargo build --release
-
-# Run tests
-cargo test
-
-# Regenerate TypeScript bindings after changing a contract interface
-./scripts/generate-contract-bindings.sh
-
-# Check per-entrypoint CPU/memory cost against the baseline
-cargo test -p contract-benchmarks -- --nocapture
-```
-
-Testnet deploys run from CI and publish addresses to
-[`deployments/testnet.json`](./deployments/testnet.json); see
-[docs/deployments.md](./docs/deployments.md).
-
-See [backend/README.md](./backend/README.md) for comprehensive backend documentation, deployment guides, and smart contract specifications.
-
-## Roadmap
-
-### Q1 2024
-- [x] Frontend UI for creators and bounties
-- [x] Soroban smart contracts (bounty, escrow, freelancer, governance)
-- [ ] User authentication with Stellar wallets
-- [ ] API integration with frontend
-
-### Q2 2024
-- [ ] Payment processing & escrow integration
-- [ ] Ratings and reviews system
-- [ ] Freelancer verification program
-- [ ] Blockchain event indexing
-
-### Q3 2024
-- [ ] Mobile app (React Native)
-- [ ] Real-time notifications via blockchain events
-- [ ] Milestone-based payment releases
-- [ ] Dispute resolution system
-
-### Q4 2024
-- [ ] Portfolio analytics dashboard
-- [ ] Creator verification & reputation NFTs
-- [ ] API for third-party integrations
-- [ ] Decentralized governance voting
-
----
-
-**Start your journey on Stellar today** - Where exceptional talent meets extraordinary opportunities.
-
-Built with [Next.js](https://nextjs.org), [Tailwind CSS](https://tailwindcss.com), and [shadcn/ui](https://ui.shadcn.com).
+<!-- handsoff-issue-1364 -->
+- #1364: [Mobile] Implement specialized Infinite Scrolling structures preserving memory gracefully

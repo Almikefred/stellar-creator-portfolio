@@ -27,7 +27,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "../theme/ThemeProvider";
-import { useWalletAuth, AuthStatus } from "../hooks/useWalletAuth";
+import { useWalletAuth, type AuthStatus } from "../hooks/useWalletAuth";
 import { FontSize, FontWeight, Radius, Shadow, Spacing } from "../theme/tokens";
 
 // ─── Status config ────────────────────────────────────────────────────────────
@@ -37,6 +37,8 @@ const STATUS_CONFIG: Record<
   { label: string; color: string; icon: string; showSpinner: boolean }
 > = {
   idle:            { label: "Not connected",       color: "#94a3b8", icon: "○",  showSpinner: false },
+  biometric:       { label: "Checking biometrics…", color: "#3b82f6", icon: "🔒", showSpinner: true  },
+  pin:             { label: "Enter PIN",           color: "#3b82f6", icon: "🔢", showSpinner: false },
   connecting:      { label: "Preparing…",          color: "#3b82f6", icon: "⟳",  showSpinner: true  },
   awaiting_wallet: { label: "Waiting for wallet…", color: "#f59e0b", icon: "📲", showSpinner: true  },
   verifying:       { label: "Verifying identity…", color: "#6366f1", icon: "🔐", showSpinner: true  },
@@ -185,7 +187,9 @@ export function LoginScreen({
   onRegister?: () => void;
 }) {
   const { colors, isDark } = useTheme();
-  const { status, session, error, connect, disconnect, resetError } = useWalletAuth();
+  const { status, session, error, connect, disconnect, resetError } = useWalletAuth({
+    autoStart: false,
+  });
 
   // Fade-in hero on mount
   const fadeAnimRef = useRef(new Animated.Value(0));
@@ -198,32 +202,29 @@ export function LoginScreen({
     }).start();
   }, [fadeAnim]);
 
-  // Notify parent when authenticated
   useEffect(() => {
     if (status === "authenticated" && session?.publicKey) {
       onAuthenticated?.(session.publicKey);
     }
-  }, [status, session, onAuthenticated]);
+  }, [status, session?.publicKey, onAuthenticated]);
 
-  const handleConnect = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await connect();
+  const isBusy =
+    status === "connecting" || status === "awaiting_wallet" || status === "verifying";
+
+  const handleConnect = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void connect();
   }, [connect]);
 
-  const handleDisconnect = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await disconnect();
+  const handleDisconnect = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    void disconnect();
   }, [disconnect]);
 
   const handleRetry = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     resetError();
-  }, [resetError]);
-
-  const isBusy =
-    status === "connecting" ||
-    status === "awaiting_wallet" ||
-    status === "verifying";
+    void connect();
+  }, [connect, resetError]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -239,13 +240,12 @@ export function LoginScreen({
           <View style={[styles.logoWrap, { backgroundColor: colors.primary + "18" }]}>
             <Text style={styles.logoText}>✦</Text>
           </View>
-          <Text style={[styles.appName, { color: colors.text }]}>Stellar</Text>
+          <Text style={[styles.appName, { color: colors.text }]}>Tamgora</Text>
           <Text style={[styles.tagline, { color: colors.textSecondary }]}>
-            Connect your Stellar wallet to access the creator marketplace
+            Connect a Stellar wallet to access the creator marketplace
           </Text>
         </Animated.View>
 
-        {/* Status card */}
         <StatusCard
           status={status}
           publicKey={session?.publicKey}
@@ -253,7 +253,6 @@ export function LoginScreen({
           colors={colors}
         />
 
-        {/* Supported wallets */}
         <View style={[styles.walletsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Text style={[styles.walletsTitle, { color: colors.textTertiary }]}>
             COMPATIBLE WALLETS
@@ -266,7 +265,6 @@ export function LoginScreen({
           ))}
         </View>
 
-        {/* Actions */}
         <View style={styles.actions}>
           {status === "authenticated" ? (
             <WalletButton
@@ -277,15 +275,13 @@ export function LoginScreen({
               colors={colors}
             />
           ) : status === "error" ? (
-            <>
-              <WalletButton
-                label="Try Again"
-                onPress={handleRetry}
-                disabled={false}
-                variant="primary"
-                colors={colors}
-              />
-            </>
+            <WalletButton
+              label="Try Again"
+              onPress={handleRetry}
+              disabled={false}
+              variant="primary"
+              colors={colors}
+            />
           ) : (
             <WalletButton
               label={isBusy ? "Connecting…" : "Connect Wallet"}
@@ -299,13 +295,13 @@ export function LoginScreen({
 
         {/* Legal note */}
         <Text style={[styles.legal, { color: colors.textTertiary }]}>
-          By connecting, you agree to Stellar's Terms of Service. Your private key never leaves your wallet.
+          By continuing, you agree to Tamgora's Terms of Service.
         </Text>
 
         {onRegister && (
           <Pressable onPress={onRegister} style={styles.registerLink}>
             <Text style={[styles.registerText, { color: colors.textSecondary }]}>
-              New to Stellar?{" "}
+              New to Tamgora?{" "}
               <Text style={{ color: colors.primary, fontWeight: FontWeight.semibold }}>
                 Create an account
               </Text>

@@ -1,20 +1,48 @@
-import { ProfileForm } from "@/components/forms/profile-form";
-import GithubProfile from "@/components/ui/github-profile";
-import SocialLinks from "@/components/ui/social-links";
+import { Suspense } from 'react';
+import { ProfileForm } from '@/components/forms/profile-form';
+import { PortfolioWidget } from '@/components/profile/portfolio-widget';
+import { PortfolioWidgetSkeleton } from '@/components/ui/skeleton-group';
+import { getServerSession } from '@/lib/auth/auth';
+import { prisma } from '@/lib/prisma';
+
+/** Links already saved on the signed-in user's profile (empty when signed out). */
+async function getSavedLinks() {
+    try {
+        const session = await getServerSession();
+        if (!session?.user?.id) return null;
+        return await prisma.creatorProfile.findUnique({
+            where: { userId: session.user.id },
+            select: { githubUrl: true, figmaUrl: true, websiteUrl: true },
+        });
+    } catch {
+        return null;
+    }
+}
+
+async function LinkedProfiles() {
+    const links = await getSavedLinks();
+    return (
+        <PortfolioWidget
+            githubUrl={links?.githubUrl}
+            figmaUrl={links?.figmaUrl}
+            websiteUrl={links?.websiteUrl}
+        />
+    );
+}
 
 export default function ProfileEditPage() {
     return (
         <div className="container max-w-2xl py-10">
             <div className="space-y-6">
                 <div>
-                    <h4 className="text-md font-medium">Profile Aggregation</h4>
-                    <p className="text-sm text-muted-foreground">Preview external profile data (example: GitHub)</p>
+                    <h4 className="text-md font-medium">Linked profiles</h4>
+                    <p className="text-sm text-muted-foreground">
+                        Live data from the accounts you have linked. Edit the links below to verify them.
+                    </p>
                     <div className="mt-4">
-                        {/* server component fetches public GitHub data for demo username */}
-                        <GithubProfile username="octocat" />
-                    </div>
-                    <div className="mt-4">
-                        <SocialLinks githubUrl="https://github.com/octocat" figmaUrl="" websiteUrl="" />
+                        <Suspense fallback={<PortfolioWidgetSkeleton />}>
+                            <LinkedProfiles />
+                        </Suspense>
                     </div>
                 </div>
                 <div>

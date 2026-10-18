@@ -21,7 +21,19 @@ export interface Bounty {
  * DataKey for typed storage lookups
  */
  export type DataKey =
-  { tag: "EscrowContract"; values: void };
+  { tag: "EscrowContract"; values: void } |
+  /**
+   * Ordered list of authorised multi-sig signers (Address).
+   */
+  { tag: "MultisigSigners"; values: void } |
+  /**
+   * Minimum number of signers required (M in M-of-N). Defaults to 2.
+   */
+  { tag: "MultisigRequired"; values: void } |
+  /**
+   * Governance-configurable threshold above which multi-sig is enforced.
+   */
+  { tag: "MultisigThreshold"; values: void };
 
 /**
  * Bounty Error Codes
@@ -29,7 +41,15 @@ export interface Bounty {
 export const BountyError = {
   1 : { message: "DeadlineNotPassed" },
   2 : { message: "AlreadyProcessed" },
-  3 : { message: "InsufficientBalance" }
+  3 : { message: "InsufficientBalance" },
+  /**
+   * Bounty budget exceeds the multi-sig threshold and no signer set is configured.
+   */
+  4 : { message: "MultisigNotConfigured" },
+  /**
+   * Fewer signers authorised than the required minimum (M-of-N not satisfied).
+   */
+  5 : { message: "InsufficientSigners" }
 }
 
 /**

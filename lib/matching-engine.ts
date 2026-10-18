@@ -27,6 +27,22 @@ export interface CreatorFeatures {
   skills: string[]
   rating: number
   completedProjects: number
+  /** ISO timestamp of last completed bounty — used for activity boost */
+  lastBountyCompletedAt?: string | null
+  /** Response rate 0–1 — used for activity boost */
+  responseRate?: number | null
+  /**
+   * Open to new bounty applications right now (issue #1609). Treated as
+   * available when omitted, so existing callers/tests that don't set this
+   * keep their previous behavior. `rankCreatorsForBounty` filters out
+   * creators with this explicitly `false` before scoring — unavailable
+   * creators never appear in results, however well they'd otherwise score.
+   */
+  acceptingWork?: boolean
+  /** Rate card, if the creator has set one — see `budgetFit` below. */
+  hourlyRate?: number | null
+  projectRateMin?: number | null
+  projectRateMax?: number | null
 }
 
 export interface MatchScoreBreakdown {
@@ -36,10 +52,13 @@ export interface MatchScoreBreakdown {
   reasons: string[]
   components: {
     skillOverlap: number
+    exactSkill: number
+    exactCategory: number
     textRelevance: number
     disciplineMatch: number
     reputation: number
     budgetFit: number
+    activity: number
   }
 }
 
@@ -88,6 +107,64 @@ function skillTagOverlap(bounty: BountyFeatures, creator: CreatorFeatures): numb
   return bagOverlap(bountySide, creator.skills)
 }
 
+/**
+ * Exact skill match: counts how many of the bounty's required tags appear
+ * verbatim in the creator's skills (case-insensitive). Returns 0–1 where 1
+ * means every bounty tag is exactly covered.
+ */
+export function exactSkillOverlap(bounty: BountyFeatures, creator: CreatorFeatures): number {
+  const required = bounty.tags.filter(Boolean).map((t) => t.toLowerCase().trim())
+  if (required.length === 0) return 0
+  const creatorSet = new Set(creator.skills.map((s) => s.toLowerCase().trim()))
+  const matches = required.filter((t) => creatorSet.has(t)).length
+  return matches / required.length
+}
+
+/**
+ * Exact category match: 1 if creator's discipline exactly equals the bounty
+ * category, 0.5 if one contains the other, 0 otherwise.
+ */
+export function exactCategoryMatch(bounty: BountyFeatures, creator: CreatorFeatures): number {
+  if (!creator.discipline || !bounty.category) return 0
+  const d = creator.discipline.toLowerCase().trim()
+  const c = bounty.category.toLowerCase().trim()
+  if (d === c) return 1
+  if (d.includes(c) || c.includes(d)) return 0.5
+  return 0
+}
+
+/**
+ * Activity boost: rewards creators with recent completions and high response
+ * rates. Configurable via `boostConfig`.
+ */
+export interface ActivityBoostConfig {
+  /** Multiplier applied to the raw activity score (default 1). */
+  weight?: number
+  /** Age in days beyond which activity score decays to 0 (default 180). */
+  recencyWindowDays?: number
+}
+
+export function activityBoost(
+  creator: CreatorFeatures,
+  config: ActivityBoostConfig = {},
+): number {
+  const { weight = 1, recencyWindowDays = 180 } = config
+
+  let recency = 0
+  if (creator.lastBountyCompletedAt) {
+    const ageMs = Date.now() - new Date(creator.lastBountyCompletedAt).getTime()
+    const ageDays = ageMs / 86_400_000
+    recency = Math.max(0, 1 - ageDays / recencyWindowDays)
+  }
+
+  const responseRate = typeof creator.responseRate === 'number'
+    ? Math.max(0, Math.min(1, creator.responseRate))
+    : 0
+
+  // Combine: 60% recency, 40% response rate
+  return clamp01((recency * 0.6 + responseRate * 0.4) * weight)
+}
+
 function disciplineMatch(bounty: BountyFeatures, creator: CreatorFeatures): number {
   if (!creator.discipline || !bounty.category) return 0.35
   const d = creator.discipline.toLowerCase()
@@ -104,8 +181,35 @@ function reputation(creator: CreatorFeatures): number {
 }
 
 /** Heuristic: higher completion count → comfortable with larger briefs */
+/**
+ * A bounty with no stated duration could be anywhere from a day to a few
+ * weeks of work — used only to translate an hourly rate into a rough
+ * project-equivalent range when a creator has set an hourly rate but no
+ * project range (the common case: most creators price one or the other).
+ */
+const HOURLY_TO_PROJECT_HOURS = { min: 8, max: 160 }
+
 function budgetFit(bounty: BountyFeatures, creator: CreatorFeatures): number {
   const b = bounty.budget
+
+  // Prefer the creator's own declared rate card (issue #1609) over the
+  // completedProjects-based proxy below, when they've set one.
+  const hasProjectRange = creator.projectRateMin != null || creator.projectRateMax != null
+  const hasHourlyRate = creator.hourlyRate != null
+  if (hasProjectRange || hasHourlyRate) {
+    const min = hasProjectRange
+      ? creator.projectRateMin ?? creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.min
+      : creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.min
+    const max = hasProjectRange
+      ? creator.projectRateMax ?? creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.max
+      : creator.hourlyRate! * HOURLY_TO_PROJECT_HOURS.max
+    if (b >= min && b <= max) return 1
+    const dist = b < min ? (min - b) / Math.max(min, 1) : (b - max) / Math.max(max, 1)
+    return Math.max(0, 1 - Math.min(1, dist))
+  }
+
+  // Fallback for creators who haven't set a rate card yet: infer a
+  // plausible budget range from their track record.
   const tier = Math.min(1, creator.completedProjects / 20)
   const softMin = 300 + tier * 1500
   const softMax = 5000 + tier * 25000
@@ -116,9 +220,10 @@ function budgetFit(bounty: BountyFeatures, creator: CreatorFeatures): number {
 }
 
 const WEIGHTS = {
-  control: { skill: 1, text: 1, disc: 1, rep: 1, budget: 1 },
-  treatment_skill: { skill: 1.85, text: 1, disc: 1.1, rep: 0.95, budget: 0.85 },
-  treatment_budget: { skill: 0.9, text: 1, disc: 1, rep: 1, budget: 1.75 },
+  //                     skill  text  disc   rep  budget  exactSkill  exactCat  activity
+  control:          { skill: 1,    text: 1, disc: 1,    rep: 1, budget: 1, exactSkill: 1.5, exactCat: 1.4, activity: 1 },
+  treatment_skill:  { skill: 1.85, text: 1, disc: 1.1, rep: 0.95, budget: 0.85, exactSkill: 2.2, exactCat: 1.8, activity: 1.2 },
+  treatment_budget: { skill: 0.9,  text: 1, disc: 1,   rep: 1, budget: 1.75, exactSkill: 1.2, exactCat: 1.2, activity: 0.9 },
 } as const
 
 function clamp01(x: number): number {
@@ -132,31 +237,51 @@ export function scoreCreatorBountyPair(
   bounty: BountyFeatures,
   creator: CreatorFeatures,
   strategy: MatchingStrategy = 'control',
+  activityConfig?: ActivityBoostConfig,
 ): MatchScoreBreakdown {
   const w = WEIGHTS[strategy] ?? WEIGHTS.control
   const skillOverlap = skillTagOverlap(bounty, creator)
+  const exactSkill = exactSkillOverlap(bounty, creator)
+  const exactCat = exactCategoryMatch(bounty, creator)
   const textRel = textRelevance(bounty, creator)
   const disc = disciplineMatch(bounty, creator)
   const rep = reputation(creator)
   const budget = budgetFit(bounty, creator)
+  const activity = activityBoost(creator, activityConfig)
 
+  // Base weights (sum to ~1 before strategy multipliers)
   const weighted =
-    skillOverlap * 0.34 * w.skill +
-    textRel * 0.22 * w.text +
-    disc * 0.14 * w.disc +
-    rep * 0.18 * w.rep +
-    budget * 0.12 * w.budget
+    skillOverlap  * 0.24 * w.skill +
+    exactSkill    * 0.20 * w.exactSkill +
+    exactCat      * 0.10 * w.exactCat +
+    textRel       * 0.16 * w.text +
+    disc          * 0.10 * w.disc +
+    rep           * 0.12 * w.rep +
+    budget        * 0.06 * w.budget +
+    activity      * 0.02 * w.activity
 
-  const norm = 0.34 * w.skill + 0.22 * w.text + 0.14 * w.disc + 0.18 * w.rep + 0.12 * w.budget
+  const norm =
+    0.24 * w.skill +
+    0.20 * w.exactSkill +
+    0.10 * w.exactCat +
+    0.16 * w.text +
+    0.10 * w.disc +
+    0.12 * w.rep +
+    0.06 * w.budget +
+    0.02 * w.activity
+
   const raw = clamp01(weighted / norm)
   const score = Math.round(raw * 1000) / 10
 
   const reasons: string[] = []
+  if (exactSkill >= 0.6)  reasons.push('Exact skill match with bounty requirements')
+  if (exactCat >= 0.5)    reasons.push('Category exactly matches your discipline')
   if (skillOverlap >= 0.35) reasons.push('Strong overlap between bounty tags and your skills')
-  if (textRel >= 0.12) reasons.push('Brief aligns with your profile and bio')
-  if (disc >= 0.75) reasons.push('Category fits your discipline')
-  if (rep >= 0.72) reasons.push('Solid track record on the platform')
-  if (budget >= 0.85) reasons.push('Budget tier fits your experience level')
+  if (textRel >= 0.12)    reasons.push('Brief aligns with your profile and bio')
+  if (disc >= 0.75)       reasons.push('Category fits your discipline')
+  if (rep >= 0.72)        reasons.push('Solid track record on the platform')
+  if (budget >= 0.85)     reasons.push('Budget tier fits your experience level')
+  if (activity >= 0.6)    reasons.push('Recently active with high response rate')
   if (reasons.length === 0) reasons.push('Exploratory match — review the brief to decide fit')
 
   return {
@@ -164,11 +289,14 @@ export function scoreCreatorBountyPair(
     rawScore: Math.round(raw * 1000) / 10,
     reasons,
     components: {
-      skillOverlap: Math.round(skillOverlap * 100) / 100,
-      textRelevance: Math.round(textRel * 100) / 100,
-      disciplineMatch: Math.round(disc * 100) / 100,
-      reputation: Math.round(rep * 100) / 100,
-      budgetFit: Math.round(budget * 100) / 100,
+      skillOverlap:    Math.round(skillOverlap * 100) / 100,
+      exactSkill:      Math.round(exactSkill  * 100) / 100,
+      exactCategory:   Math.round(exactCat    * 100) / 100,
+      textRelevance:   Math.round(textRel     * 100) / 100,
+      disciplineMatch: Math.round(disc        * 100) / 100,
+      reputation:      Math.round(rep         * 100) / 100,
+      budgetFit:       Math.round(budget      * 100) / 100,
+      activity:        Math.round(activity    * 100) / 100,
     },
   }
 }
@@ -206,7 +334,11 @@ export function rankCreatorsForBounty(
   strategy: MatchingStrategy,
   limit = 20,
 ): Array<{ creator: CreatorFeatures; breakdown: MatchScoreBreakdown }> {
+  // Matching respects availability (issue #1609): a creator who has marked
+  // themselves as not accepting work is excluded outright, not just scored
+  // lower. `undefined` (not set at all) is treated as available.
   const ranked = creators
+    .filter((creator) => creator.acceptingWork !== false)
     .map((creator) => ({
       creator,
       breakdown: scoreCreatorBountyPair(bounty, creator, strategy),

@@ -13,7 +13,7 @@ import { Users } from 'lucide-react'
 
 // Dynamically import to avoid SSR issues with browser-only Yjs/WebSocket APIs
 const CollaborativeEditor = dynamic(
-  () => import('@/components/collaborative-editor').then((m) => m.CollaborativeEditor),
+  () => import('@/components/editor/collaborative-editor').then((m) => m.CollaborativeEditor),
   { ssr: false, loading: () => <EditorSkeleton /> },
 )
 

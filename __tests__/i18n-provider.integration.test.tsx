@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { I18nProvider, useI18n } from '@/components/i18n-provider';
+import { I18nProvider, useI18n } from '@/components/providers/i18n-provider';
 
 function mockLocalesFetch() {
   const dir = join(process.cwd(), 'public/locales');

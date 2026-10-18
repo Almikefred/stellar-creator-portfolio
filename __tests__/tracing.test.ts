@@ -1,5 +1,5 @@
 /**
- * Tests for backend/services/tracing.ts  (#639)
+ * Tests for server/services/tracing.ts  (#639)
  *
  * Tests cover:
  *  - SDK initialization guard (no double-init)
@@ -63,17 +63,15 @@ vi.mock('@opentelemetry/exporter-trace-otlp-grpc', () => ({
   OTLPTraceExporter: class { constructor(_opts?: unknown) {} },
 }));
 
-vi.mock('@opentelemetry/resources', () => ({
-  Resource: class {
-    static default() {
-      return new (class {
-        merge() { return {}; }
-      })();
-    }
-    constructor(_attrs: unknown) {}
-    merge() { return {}; }
-  },
-}));
+// @opentelemetry/resources 2.x replaced the Resource class with factory
+// functions.
+vi.mock('@opentelemetry/resources', () => {
+  const resource = { merge: () => resource };
+  return {
+    defaultResource: () => resource,
+    resourceFromAttributes: () => resource,
+  };
+});
 
 vi.mock('@opentelemetry/sdk-trace-base', () => ({
   BatchSpanProcessor: class { constructor(_e: unknown, _o?: unknown) {} },
@@ -102,7 +100,7 @@ import {
   addEvent,
   recordException,
   getTraceparent,
-} from '@/backend/services/tracing';
+} from '@/server/services/tracing';
 
 beforeEach(() => {
   vi.clearAllMocks();

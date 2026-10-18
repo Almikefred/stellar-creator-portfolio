@@ -13,9 +13,9 @@ import { Platform } from 'react-native';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const API_BASE_URL = __DEV__ 
+export const API_BASE_URL = __DEV__
   ? Platform.OS === 'ios' ? 'http://localhost:3001' : 'http://10.0.2.2:3001'
-  : 'https://api.stellar.app';
+  : 'https://api.tamgora.app';
 
 const API_TIMEOUT = 15000; // 15 seconds
 
@@ -355,6 +355,25 @@ class ApiClient {
   }
 
   // ─── Health Check ──────────────────────────────────────────────────────────
+
+  // ─── Activity / Notification Endpoints ─────────────────────────────────────
+
+  async getActivities(params: {
+    limit?: number;
+    offset?: number;
+  }): Promise<PaginatedResponse<{ id: string; type: string; title: string; body: string; read: boolean; bountyId?: string; applicationId?: string; createdAt: string }>> {
+    const query = new URLSearchParams();
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.offset) query.set('offset', String(params.offset));
+
+    return this.request(`/notifications?${query.toString()}`);
+  }
+
+  async markActivityRead(activityId: string): Promise<void> {
+    await this.request(`/notifications/${activityId}/read`, {
+      method: 'PATCH',
+    });
+  }
 
   async healthCheck(): Promise<{ status: string; service: string; version: string }> {
     const url = `${API_BASE_URL}/health`;

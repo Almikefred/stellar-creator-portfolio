@@ -63,11 +63,11 @@ class Benchmark {
 
     console.log(`\n📊 Benchmark Comparison: ${before.name} vs ${after.name}`);
     console.log(
-      `   Duration: ${before.duration.toFixed(2)}ms → ${after.duration.toFixed(2)}ms (${improvement > 0 ? "+" : ""}${improvement.toFixed(1)}%)`,
+      `   Duration: ${before.duration.toFixed(2)}ms → ${after.duration.toFixed(2)}ms (${improvement > 0 ? '+' : ''}${improvement.toFixed(1)}%)`,
     );
     if (before.queriesCount > 0 && after.queriesCount > 0) {
       console.log(
-        `   Queries: ${before.queriesCount} → ${after.queriesCount} (${queryReduction > 0 ? "+" : ""}${queryReduction.toFixed(1)}%)`,
+        `   Queries: ${before.queriesCount} → ${after.queriesCount} (${queryReduction > 0 ? '+' : ''}${queryReduction.toFixed(1)}%)`,
       );
     }
 
@@ -98,11 +98,11 @@ export const benchmark = new Benchmark();
  * Example benchmark test for N+1 query detection
  */
 export async function benchmarkN1Queries() {
-  console.log("\n🚀 Starting N+1 Query Benchmark\n");
+  console.log('\n🚀 Starting N+1 Query Benchmark\n');
 
   // Simulate N+1 query pattern (without optimization)
   const n1Result = await benchmark.run(
-    "N+1 Query Pattern (20 creators)",
+    'N+1 Query Pattern (20 creators)',
     async () => {
       // Simulate 20 individual queries
       for (let i = 0; i < 20; i++) {
@@ -114,7 +114,7 @@ export async function benchmarkN1Queries() {
 
   // Simulate optimized batch query
   const batchResult = await benchmark.run(
-    "Batch Query Pattern (20 creators)",
+    'Batch Query Pattern (20 creators)',
     async () => {
       // Simulate 1 batch query
       await new Promise((resolve) => setTimeout(resolve, 15));
@@ -125,16 +125,16 @@ export async function benchmarkN1Queries() {
   // Compare results
   benchmark.compare(n1Result, batchResult);
 
-  console.log("\n✨ Benchmark complete!");
+  console.log('\n✨ Benchmark complete!');
 }
 
 /**
  * Measure query performance with DataLoader
  */
 export async function benchmarkDataLoader() {
-  console.log("\n🚀 Starting DataLoader Benchmark\n");
+  console.log('\n🚀 Starting DataLoader Benchmark\n');
 
-  const { DataLoader } = await import("@/lib/dataloader");
+  const { DataLoader } = await import('@/lib/dataloader');
 
   // Create a test DataLoader
   const loader = new DataLoader(async (ids: string[]) => {
@@ -145,7 +145,7 @@ export async function benchmarkDataLoader() {
 
   // Benchmark sequential loads (simulates N+1)
   const sequentialResult = await benchmark.run(
-    "Sequential DataLoader Loads (20 items)",
+    'Sequential DataLoader Loads (20 items)',
     async () => {
       const promises = [];
       for (let i = 0; i < 20; i++) {
@@ -158,7 +158,7 @@ export async function benchmarkDataLoader() {
 
   // Benchmark batch loads
   const batchLoadResult = await benchmark.run(
-    "Batch DataLoader Loads (20 items)",
+    'Batch DataLoader Loads (20 items)',
     async () => {
       const ids = Array.from({ length: 20 }, (_, i) => `item-${i}`);
       await loader.loadMany(ids);
@@ -168,5 +168,5 @@ export async function benchmarkDataLoader() {
 
   benchmark.compare(sequentialResult, batchLoadResult);
 
-  console.log("\n✨ DataLoader benchmark complete!");
+  console.log('\n✨ DataLoader benchmark complete!');
 }

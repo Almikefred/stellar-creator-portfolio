@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { queryBounties, type BountyFilters } from '@/backend/services/bounty.service';
+import { queryBounties } from '@/server/services/bounty.service';
 
 // Mock Prisma
 vi.mock('@/lib/prisma', () => ({

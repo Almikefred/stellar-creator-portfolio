@@ -107,7 +107,7 @@ export async function generateReviewProof(
     }
 
     // Write witness into WASM memory and call prove().
-    const memory = exports.memory as WebAssembly.Memory;
+    const memory = wasm.exports.memory as WebAssembly.Memory;
     const witnessBytes = encoder.encode(witness);
     const ptr: number = (exports.alloc as CallableFunction)(witnessBytes.length) as number;
     new Uint8Array(memory.buffer, ptr, witnessBytes.length).set(witnessBytes);

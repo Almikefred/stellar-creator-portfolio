@@ -1,0 +1,5 @@
+# Root Docker Compose specification for Tamgora platform (#1631)
+# Allows running compose directly from repository root.
+include:
+  - path: backend/docker-compose.yml
+  - path: docker-compose.test.yml

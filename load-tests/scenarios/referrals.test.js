@@ -1,7 +1,9 @@
 /**
  * Load test — Referrals API
- * Covers: generate code, get stats, get history, track event
- * Rate limit: 30 req/min general, 10 req/min POST
+ * Covers: get code, get stats, track a referral event
+ * Rate limits: 30 reads/min and 10 tracks/min per user.
+ * Tracking is recorded for the signed-in user; set REFERRAL_CODE to a code
+ * owned by a different account in the target environment.
  */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -55,15 +57,15 @@ export default function () {
   const trackRes = http.post(
     `${BASE_URL}/api/referrals`,
     JSON.stringify({
-      code:           'TESTCODE123',
-      referredUserId: `user-${__VU}-${__ITER}`,
-      event:          'signup',
+      code:  __ENV.REFERRAL_CODE || 'TESTCODE123',
+      event: 'signup',
     }),
     { headers: authHeaders(sessionCookie) },
   );
   check(trackRes, {
-    'referrals track: status 200 or 401 or 429': (r) =>
-      [200, 401, 429].includes(r.status),
+    // 409: this user was already recorded for the code (repeat iterations).
+    'referrals track: recorded or already recorded': (r) =>
+      [201, 409, 429].includes(r.status),
   });
 
   sleep(2);

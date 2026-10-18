@@ -9,16 +9,17 @@
  * - Evaluation latency < 5ms (Redis hit) / < 20ms (DB fallback)
  */
 
-import { prisma } from "@/lib/prisma";
-import { redisGet, redisSet, redisDel } from "@/lib/storage/redis";
-import { createHash } from "crypto";
+import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
+import { redisGet, redisSet, redisDel } from '@/lib/storage/redis';
+import { createHash } from 'crypto';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface FlagContext {
   userId?: string;
   role?: string;
-  platform?: "ios" | "android" | "web";
+  platform?: 'ios' | 'android' | 'web';
   betaGroup?: string;
   [key: string]: unknown;
 }
@@ -57,9 +58,9 @@ export async function invalidateFlagCache(name: string): Promise<void> {
  * Same user always lands in the same bucket for a given flag.
  */
 function rolloutBucket(flagName: string, userId: string): number {
-  const hash = createHash("sha256")
+  const hash = createHash('sha256')
     .update(`${flagName}:${userId}`)
-    .digest("hex");
+    .digest('hex');
   // Take first 4 hex chars → 0–65535, map to 0–100
   return Math.floor((parseInt(hash.slice(0, 4), 16) / 65535) * 100);
 }
@@ -191,13 +192,21 @@ export interface UpsertFlagInput {
  * Create or update a feature flag. Invalidates cache after write.
  */
 export async function upsertFlag(input: UpsertFlagInput) {
+  // Distinguish "not provided" (undefined - leave the field alone on
+  // update) from "explicitly cleared" (null - Prisma needs its JsonNull
+  // sentinel to actually write a JSON null, not skip the field).
+  const userSegmentValue: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =
+    input.userSegment === null
+      ? Prisma.JsonNull
+      : (input.userSegment as Prisma.InputJsonValue | undefined);
+
   const flag = await prisma.featureFlag.upsert({
     where: { name: input.name },
     create: {
       name: input.name,
       enabled: input.enabled ?? false,
       rolloutPercent: input.rolloutPercent ?? 0,
-      userSegment: input.userSegment ?? undefined,
+      userSegment: userSegmentValue,
       description: input.description,
     },
     update: {
@@ -206,7 +215,7 @@ export async function upsertFlag(input: UpsertFlagInput) {
         rolloutPercent: input.rolloutPercent,
       }),
       ...(input.userSegment !== undefined && {
-        userSegment: input.userSegment ?? undefined,
+        userSegment: userSegmentValue,
       }),
       ...(input.description !== undefined && {
         description: input.description,
@@ -223,7 +232,7 @@ export async function upsertFlag(input: UpsertFlagInput) {
  */
 export async function listFlags() {
   return prisma.featureFlag.findMany({
-    orderBy: { name: "asc" },
+    orderBy: { name: 'asc' },
     include: {
       _count: { select: { evaluations: true } },
     },
@@ -238,7 +247,7 @@ export async function getFlagWithAnalytics(name: string) {
     where: { name },
     include: {
       evaluations: {
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         take: 100,
         select: { result: true, createdAt: true, userId: true },
       },

@@ -93,9 +93,9 @@ export function createCreatorReviewsLoader() {
   return new DataLoader(
     async (creatorIds: string[]) => {
       // Batch fetch reviews for multiple creators
-      const response = await fetch("/api/creators/reviews/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch('/api/creators/reviews/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ creatorIds }),
       });
 
@@ -116,9 +116,9 @@ export function createCreatorReviewsLoader() {
 export function createCreatorReputationLoader() {
   return new DataLoader(
     async (creatorIds: string[]) => {
-      const response = await fetch("/api/creators/reputation/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch('/api/creators/reputation/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ creatorIds }),
       });
 

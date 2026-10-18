@@ -5,8 +5,19 @@
 #![allow(deprecated)]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    contract, contractimpl, contracttype, contracterror, symbol_short, Address, Bytes, BytesN, Env,
 };
+
+/// Error types for identity verification operations (Issue #1341)
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum IdentityError {
+    Unauthorized = 1,
+    InvalidSignature = 2,
+    InvalidDomainHash = 3,
+    AlreadyVerified = 4,
+    ProofNotFound = 5,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -16,6 +27,16 @@ pub struct SocialProof {
     pub proof: BytesN<64>,
     pub verified: bool,
     pub submitted_at: u64,
+}
+
+/// Decentralized authenticity record linking an address to verified social domains (Issue #1341)
+#[contracttype]
+#[derive(Clone)]
+pub struct DomainAttestation {
+    pub address: Address,
+    pub domain_hash: BytesN<32>,
+    pub verified: bool,
+    pub attested_at: u64,
 }
 
 /// On-chain tier levels mirroring the DB enum.
@@ -74,6 +95,7 @@ const ONE_YEAR_SECS: u64 = 365 * 24 * 60 * 60;
 #[contractimpl]
 impl IdentityContract {
     pub fn initialize(env: Env, admin: Address) {
+        admin.require_auth();
         assert!(!env.storage().persistent().has(&DataKey::Admin), "Already initialized");
         env.storage().persistent().set(&DataKey::Admin, &admin);
     }
@@ -81,6 +103,21 @@ impl IdentityContract {
     /// Submit a cryptographic proof linking an address to a social domain.
     /// Verifies the Ed25519 signature of `domain_hash` under `public_key`
     /// natively via `env.crypto().ed25519_verify`.
+    ///
+    /// # Arguments
+    /// * `owner` - The Address submitting the proof (must authenticate)
+    /// * `domain_hash` - The 32-byte hash of the social domain/handle
+    /// * `public_key` - The Ed25519 public key used for signature verification
+    /// * `proof` - The Ed25519 signature proof (64 bytes)
+    ///
+    /// # Returns
+    /// bool - true on successful verification
+    ///
+    /// # Errors
+    /// Panics with message if:
+    /// - `owner` does not authenticate the call
+    /// - Proof is already verified for this owner+domain_hash pair
+    /// - Ed25519 signature verification fails (invalid signature)
     pub fn submit_proof(
         env: Env,
         owner: Address,
@@ -199,6 +236,34 @@ impl IdentityContract {
         env.storage().persistent().get(&DataKey::KycAttestation(user))
     }
 
+    /// Mark a user as KYC-verified following off-chain OCR document review
+    /// and admin approval (see `KYCSubmission` in the application database).
+    /// Only the platform admin may call this. Records a `Basic`-level
+    /// `KycAttestation` and emits an event carrying `kyc_submission_id` so
+    /// on-chain activity can be traced back to the reviewed document.
+    pub fn verify_kyc(env: Env, admin: Address, user: Address, kyc_submission_id: BytesN<32>) -> bool {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).expect("Not initialized");
+        assert_eq!(admin, stored_admin, "Only admin can verify KYC");
+
+        env.storage().persistent().set(
+            &DataKey::KycAttestation(user.clone()),
+            &KycAttestation {
+                user: user.clone(),
+                level: KycLevel::Basic,
+                attested_at: env.ledger().timestamp(),
+                expires_at: env.ledger().timestamp() + ONE_YEAR_SECS,
+            },
+        );
+
+        env.events().publish(
+            (symbol_short!("kyc"), symbol_short!("verified")),
+            (user, kyc_submission_id),
+        );
+
+        true
+    }
+
     /// Attest a creator's verification tier on-chain.
     /// Only the platform oracle (attester) may call this.
     pub fn set_tier(
@@ -236,6 +301,27 @@ impl IdentityContract {
             .get::<DataKey, TierAttestation>(&DataKey::Tier(owner))
             .map(|a| a.tier)
             .unwrap_or(VerificationTier::None)
+    }
+
+    // ── Issue #732: Contract upgrade mechanism ────────────────────────────────
+
+    /// Upgrade the contract WASM. Only the governance multisig (admin) may call this.
+    /// Emits an `upgraded` event with the new wasm hash.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Contract not initialized");
+        assert_eq!(admin, stored_admin, "unauthorized");
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+
+        env.events().publish(
+            (symbol_short!("contract"), symbol_short!("upgraded")),
+            new_wasm_hash,
+        );
     }
 }
 

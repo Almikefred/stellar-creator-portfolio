@@ -1,3 +1,8 @@
+# CI workflow: cli-checks
+# Purpose: Runs frontend lint+build (Orbit-style checks) and Rust/Soroban
+# clippy across the backend and smart-contract workspaces on every push/PR
+# to main. Catches type errors, lint violations, and clippy warnings before
+# they reach the main CI matrix.
 name: CLI checks
 
 on:
@@ -15,18 +20,13 @@ jobs:
 
       - uses: pnpm/action-setup@v6
         with:
-          version: 8
+          version: 10
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: 'pnpm'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 8
 
       - name: Install dependencies
         run: pnpm install
@@ -35,15 +35,17 @@ jobs:
         run: pnpm run frontend:orbit-check
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.89.0
         with:
           components: clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
 
       - name: Run backend clippy
         run: pnpm run backend:clippy
 
       - name: Run smart contract clippy
         run: pnpm run smart-contract:clippy
-
-      - name: Run combined CLI checks
-        run: pnpm run cli-checks

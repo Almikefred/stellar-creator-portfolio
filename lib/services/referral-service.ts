@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import { prisma } from '@/lib/prisma';
+import { getUnclaimedRewardsOnChain } from '@/lib/stellar/referral-contract';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,6 +56,7 @@ const FRAUD_MAX_SIGNUPS = 3;
 
 // ─── Code generation ──────────────────────────────────────────────────────────
 
+/** Returns the user's existing referral code, or generates and stores a new one. */
 export function generateReferralCode(userId: string): ReferralCode {
   const existing = getUserCode(userId);
   if (existing) return existing;
@@ -70,6 +73,7 @@ export function generateReferralCode(userId: string): ReferralCode {
   return record;
 }
 
+/** Looks up the referral code already issued to `userId`, if any. */
 export function getUserCode(userId: string): ReferralCode | null {
   for (const c of codes.values()) {
     if (c.userId === userId) return c;
@@ -77,6 +81,7 @@ export function getUserCode(userId: string): ReferralCode | null {
   return null;
 }
 
+/** Resolves a referral code (case-insensitive) to its record. */
 export function resolveCode(code: string): ReferralCode | null {
   return codes.get(code.toUpperCase()) ?? null;
 }
@@ -109,6 +114,11 @@ export type TrackResult =
   | { success: true;  record: ReferralRecord }
   | { success: false; reason: 'invalid_code' | 'self_referral' | 'duplicate' | 'fraud' };
 
+/**
+ * Records a referral event, guarding against self-referral, duplicate
+ * (referrer + referred + event) submissions, and IP-based fraud before
+ * creating a new `ReferralRecord`.
+ */
 export function trackReferral(params: TrackReferralParams): TrackResult {
   const { code, referredUserId, event, ipAddress } = params;
 
@@ -149,6 +159,7 @@ export function trackReferral(params: TrackReferralParams): TrackResult {
 
 // ─── Conversion & payout ──────────────────────────────────────────────────────
 
+/** Moves a `pending` referral to `converted`. No-op (returns null) for any other status. */
 export function convertReferral(referralId: string): ReferralRecord | null {
   const r = records.get(referralId);
   if (!r || r.status !== 'pending') return null;
@@ -157,6 +168,7 @@ export function convertReferral(referralId: string): ReferralRecord | null {
   return r;
 }
 
+/** Moves a `converted` referral to `rewarded`. No-op (returns null) for any other status. */
 export function markRewarded(referralId: string): ReferralRecord | null {
   const r = records.get(referralId);
   if (!r || r.status !== 'converted') return null;
@@ -165,6 +177,7 @@ export function markRewarded(referralId: string): ReferralRecord | null {
   return r;
 }
 
+/** Marks a referral as `flagged` (e.g. after manual fraud review), regardless of its current status. */
 export function flagReferral(referralId: string): ReferralRecord | null {
   const r = records.get(referralId);
   if (!r) return null;
@@ -174,6 +187,7 @@ export function flagReferral(referralId: string): ReferralRecord | null {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
+/** Aggregates a user's referrals into totals, conversion count, and earned/pending payout (USD cents). */
 export function getReferralStats(userId: string): ReferralStats {
   const userRecords = [...records.values()].filter((r) => r.referrerId === userId);
   return {
@@ -185,10 +199,53 @@ export function getReferralStats(userId: string): ReferralStats {
   };
 }
 
+/** Returns a user's referrals as referrer, newest first. */
 export function getReferralHistory(userId: string): ReferralRecord[] {
   return [...records.values()]
     .filter((r) => r.referrerId === userId)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+export interface ReferralStatsWithChain extends ReferralStats {
+  /**
+   * Unclaimed on-chain reward balance from the `referral` Soroban contract
+   * (smallest unit of the configured reward token, as a decimal string —
+   * i128 can exceed Number's safe integer range). `null` when the user has
+   * no linked wallet, `REFERRAL_CONTRACT_ID` isn't configured, or the
+   * on-chain read failed — the off-chain fields above are always populated
+   * regardless, so a degraded on-chain read never breaks the stats
+   * endpoint (see Issue #1612).
+   */
+  onChainUnclaimedRewards: string | null;
+}
+
+/**
+ * `getReferralStats` plus the unclaimed reward balance read live from the
+ * `referral` contract for the user's linked wallet, if any. The two sources
+ * track different things and are both surfaced rather than reconciled:
+ * `pendingPayout`/`totalEarned` above come from this app's own referral
+ * ledger (which event happened, fraud checks, etc.); `onChainUnclaimedRewards`
+ * is what the contract will actually pay out on `claim_referral_reward`.
+ */
+export async function getReferralStatsWithChain(userId: string): Promise<ReferralStatsWithChain> {
+  const stats = getReferralStats(userId);
+
+  let onChainUnclaimedRewards: string | null = null;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true },
+    });
+    if (user?.walletAddress) {
+      const rewards = await getUnclaimedRewardsOnChain(user.walletAddress);
+      if (rewards !== null) onChainUnclaimedRewards = rewards.toString();
+    }
+  } catch {
+    // Best-effort enrichment: a DB or RPC hiccup here still returns valid
+    // off-chain stats rather than failing the whole request.
+  }
+
+  return { ...stats, onChainUnclaimedRewards };
 }
 
 export { REWARDS };

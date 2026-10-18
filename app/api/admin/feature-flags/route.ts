@@ -14,9 +14,7 @@ import { authOptions } from '@/lib/auth/config';
 import {
   listFlags,
   upsertFlag,
-  invalidateFlagCache,
 } from '@/lib/feature-flags/service';
-import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
 
 // ── Auth guard ────────────────────────────────────────────────────────────────

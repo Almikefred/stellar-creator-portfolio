@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import CreatorProfilePage from '../app/creators/[id]/page';
+import { CreatorHeroSection } from '@/components/streaming/creator-hero-section';
 import { creators } from '@/lib/services/creators-data';
 
 vi.mock('next/navigation', () => ({
@@ -18,11 +18,12 @@ vi.mock('next/image', () => ({
   default: ({ src, alt, ...rest }: any) => <img src={typeof src === 'string' ? src : src.src} alt={alt} {...rest} />,
 }));
 
-describe('CreatorProfilePage hero image', () => {
+describe('CreatorHeroSection hero image', () => {
   const creator = creators[0];
 
-  it('renders hero cover eagerly for above-the-fold content', () => {
-    render(<CreatorProfilePage params={{ id: creator.id }} />);
+  it('renders hero cover eagerly for above-the-fold content', async () => {
+    // The section is an async server component: resolve it, then render the tree.
+    render(await CreatorHeroSection({ id: creator.id }));
 
     const heroImage = screen.getByAltText(`${creator.name} cover image`);
     expect(heroImage).toBeInTheDocument();

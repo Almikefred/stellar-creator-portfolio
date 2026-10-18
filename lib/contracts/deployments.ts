@@ -9,7 +9,7 @@
 
 import testnetManifest from '@/deployments/testnet.json';
 
-export const CONTRACT_NAMES = ['bounty', 'escrow', 'freelancer', 'governance'] as const;
+export const CONTRACT_NAMES = ['bounty', 'escrow', 'freelancer', 'governance', 'identity', 'oracle'] as const;
 export type ContractName = (typeof CONTRACT_NAMES)[number];
 
 export interface ContractDeployment {
@@ -39,6 +39,10 @@ function envOverride(name: ContractName): string | undefined {
       return process.env.NEXT_PUBLIC_FREELANCER_CONTRACT_ID || undefined;
     case 'governance':
       return process.env.NEXT_PUBLIC_GOVERNANCE_CONTRACT_ID || undefined;
+    case 'identity':
+      return process.env.NEXT_PUBLIC_IDENTITY_CONTRACT_ID || undefined;
+    case 'oracle':
+      return process.env.NEXT_PUBLIC_ORACLE_CONTRACT_ID || undefined;
   }
 }
 

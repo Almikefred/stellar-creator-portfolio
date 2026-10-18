@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { bountyApplicationSchema } from '@/lib/validations/bounty-application'
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
@@ -90,12 +91,7 @@ export const applicationSchema = z.object({
 })
 
 /** Client-submitted body (applicant comes from session). */
-export const applicationSubmitSchema = z.object({
-  bounty_id: z.string().min(1).max(128),
-  proposed_budget: z.number().positive(),
-  timeline: z.number().int().positive().max(3650),
-  proposal: z.string().min(50).max(5000),
-})
+export const applicationSubmitSchema = bountyApplicationSchema
 
 export const applicationStatusBodySchema = z.object({
   status: z.enum(['accepted', 'rejected']),
@@ -146,10 +142,10 @@ export type ReviewInput = z.infer<typeof reviewSchema>
 export type ReviewVoteInput = z.infer<typeof reviewVoteSchema>
 export type ReviewModerateInput = z.infer<typeof reviewModerateSchema>
 
-export function validateRequest<T>(
-  schema: z.ZodSchema<T>,
+export function validateRequest<S extends z.ZodTypeAny>(
+  schema: S,
   data: unknown
-): { success: true; data: T } | { success: false; errors: z.ZodError } {
+): { success: true; data: z.output<S> } | { success: false; errors: z.ZodError } {
   const result = schema.safeParse(data)
   if (result.success) {
     return { success: true, data: result.data }

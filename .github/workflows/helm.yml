@@ -1,13 +1,19 @@
+# CI workflow: helm
+# Purpose: Validates the Helm chart (lint + dry-run template render) on
+# PRs that touch charts/ or k8s/. Catches chart syntax errors and missing
+# values before a release reaches the cluster.
 name: Helm Chart Validation
 
 on:
   pull_request:
     paths:
       - 'helm/**'
+      - 'infrastructure/k8s/helm/**'
   push:
     branches: [main, dev]
     paths:
       - 'helm/**'
+      - 'infrastructure/k8s/helm/**'
 
 jobs:
   validate:
@@ -23,6 +29,13 @@ jobs:
       - name: Lint subcharts
         run: |
           for chart in helm/charts/*/; do
+            echo "Linting $chart"
+            helm lint "$chart"
+          done
+
+      - name: Lint infrastructure k8s charts
+        run: |
+          for chart in infrastructure/k8s/helm/*/; do
             echo "Linting $chart"
             helm lint "$chart"
           done

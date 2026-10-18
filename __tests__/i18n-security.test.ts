@@ -19,7 +19,7 @@ describe('i18n security (translation injection)', () => {
   });
 
   it('escapeInterpolationValue neutralizes quotes', () => {
-    expect(escapeInterpolationValue(`"'`)).toContain('&quot;');
-    expect(escapeInterpolationValue(`"'`)).toContain('&#39;');
+    expect(escapeInterpolationValue('"\'')).toContain('&quot;');
+    expect(escapeInterpolationValue('"\'')).toContain('&#39;');
   });
 });

@@ -10,6 +10,8 @@ WASM with the `@stellar/stellar-sdk` bindings generator.
 | `escrow` | `stellar-escrow-contract` |
 | `freelancer` | `stellar-freelancer-contract` |
 | `governance` | `stellar-governance-contract` |
+| `identity` | `stellar-identity-contract` |
+| `oracle` | `oracle` |
 
 ## Regenerating
 

@@ -11,11 +11,16 @@ function getGitSha() {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: {
-    unoptimized: true,
+    // Negotiated per request by the optimizer; AVIF first, WebP as fallback.
+    formats: ['image/avif', 'image/webp'],
+    remotePatterns: [
+      { protocol: 'https', hostname: '*.amazonaws.com' },
+      { protocol: 'https', hostname: 'ipfs.io' },
+      { protocol: 'https', hostname: '*.supabase.co' },
+      // GitHub avatars shown by the profile portfolio widget.
+      { protocol: 'https', hostname: 'avatars.githubusercontent.com' },
+    ],
   },
   // Use the git SHA as the Next.js build ID so every deployment is traceable
   // and two builds from the same commit produce identical BUILD_ID files.

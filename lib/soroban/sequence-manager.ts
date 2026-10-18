@@ -8,7 +8,7 @@
  * Solution: Distributed locking + local queue + atomic sequence increment
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '@/lib/prisma';
 
 /**
  * Sequence lock entry in database
@@ -126,7 +126,7 @@ export class SequenceManager {
         lastError = error as Error;
 
         // If lock timeout, retry
-        if ((error as Error).message.includes("lock timeout")) {
+        if ((error as Error).message.includes('lock timeout')) {
           continue;
         }
 
@@ -202,7 +202,7 @@ export class SequenceManager {
       await prisma.sequenceLock.update({
         where: { accountId: this.accountId },
         data: {
-          lockedBy: "", // Clear lock
+          lockedBy: '', // Clear lock
           expiresAt: new Date(), // Expire immediately
         },
       });

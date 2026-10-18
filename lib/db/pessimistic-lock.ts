@@ -3,16 +3,16 @@
  * Prevents race conditions and deadlocks through explicit row-level locks
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '@/lib/prisma';
 
 /**
  * Lock modes for SELECT FOR UPDATE
  */
 export enum LockMode {
-  EXCLUSIVE = "FOR UPDATE",
-  SHARED = "FOR SHARE",
-  NOWAIT = "FOR UPDATE NOWAIT",
-  SKIP_LOCKED = "FOR UPDATE SKIP LOCKED",
+  EXCLUSIVE = 'FOR UPDATE',
+  SHARED = 'FOR SHARE',
+  NOWAIT = 'FOR UPDATE NOWAIT',
+  SKIP_LOCKED = 'FOR UPDATE SKIP LOCKED',
 }
 
 /**
@@ -74,7 +74,7 @@ export async function lockBalance(
  */
 export async function acquireLocksInOrder(
   locks: Array<{
-    type: "creator" | "client" | "escrow" | "balance";
+    type: 'creator' | 'client' | 'escrow' | 'balance';
     id: string;
   }>,
   mode: LockMode = LockMode.EXCLUSIVE,
@@ -101,16 +101,16 @@ export async function acquireLocksInOrder(
       let result: any;
 
       switch (lock.type) {
-        case "creator":
+        case 'creator':
           result = await lockCreator(lock.id, mode);
           break;
-        case "client":
+        case 'client':
           result = await lockClient(lock.id, mode);
           break;
-        case "escrow":
+        case 'escrow':
           result = await lockEscrow(lock.id, mode);
           break;
-        case "balance":
+        case 'balance':
           result = await lockBalance(lock.id, mode);
           break;
       }
@@ -167,7 +167,7 @@ export async function tryLock(lockFn: () => Promise<any>): Promise<any | null> {
   try {
     return await lockWithTimeout(lockFn, 100);
   } catch (error) {
-    if ((error as Error).message.includes("timeout")) {
+    if ((error as Error).message.includes('timeout')) {
       return null;
     }
     throw error;

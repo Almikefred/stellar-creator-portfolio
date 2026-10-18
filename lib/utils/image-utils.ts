@@ -15,7 +15,6 @@ export interface OptimizationOptions {
   aboveFoldCount?: number;
   priority?: boolean;
   sizes?: string;
-  preferAvif?: boolean;
 }
 
 const clampSizes = (value?: string, fallback?: string) => value?.trim() || fallback || '100vw';
@@ -38,7 +37,7 @@ export function buildSizes(config?: ResponsiveSizeConfig): ImageProps['sizes'] {
   `.replace(/\s+/g, ' ').trim();
 }
 
-export function preferredFormats(preferAvif = true): NonNullable<ImageProps['formats']> {
+export function preferredFormats(preferAvif = true): Array<'image/avif' | 'image/webp'> {
   return preferAvif ? ['image/avif', 'image/webp'] : ['image/webp'];
 }
 
@@ -47,7 +46,6 @@ export function buildOptimizationProps({
   aboveFoldCount = 2,
   priority,
   sizes,
-  preferAvif = true,
 }: OptimizationOptions = {}) {
   const resolvedPriority = priority ?? (typeof index === 'number' ? index < aboveFoldCount : false);
 
@@ -55,7 +53,6 @@ export function buildOptimizationProps({
     priority: resolvedPriority,
     loading: resolvedPriority ? 'eager' : 'lazy' as ImageProps['loading'],
     sizes: sizes || defaultSizes,
-    formats: preferredFormats(preferAvif),
   } as const;
 }
 

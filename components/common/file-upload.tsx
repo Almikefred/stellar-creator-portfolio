@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 
 type UploadedResponse = {
   key: string;
@@ -15,7 +15,7 @@ type UploadState = {
   id: string;
   name: string;
   progress: number;
-  status: "pending" | "uploading" | "done" | "error";
+  status: 'pending' | 'uploading' | 'done' | 'error';
   error?: string;
   response?: UploadedResponse;
 };
@@ -28,37 +28,37 @@ type FileUploadProps = {
 };
 
 const DEFAULT_ALLOWED = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "application/pdf",
-  "application/zip",
-  "application/x-zip-compressed",
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+  'application/zip',
+  'application/x-zip-compressed',
 ];
 
 async function compressImage(file: File): Promise<File> {
-  if (!file.type.startsWith("image/")) return file;
+  if (!file.type.startsWith('image/')) return file;
   if (file.size <= 1.5 * 1024 * 1024) return file;
 
   const bitmap = await createImageBitmap(file);
   const MAX_DIMENSION = 1920;
   const ratio = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
 
-  const canvas = document.createElement("canvas");
+  const canvas = document.createElement('canvas');
   canvas.width = Math.round(bitmap.width * ratio);
   canvas.height = Math.round(bitmap.height * ratio);
 
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext('2d');
   if (!ctx) return file;
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 
   const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/jpeg", 0.82)
+    canvas.toBlob(resolve, 'image/jpeg', 0.82)
   );
   if (!blob) return file;
 
-  return new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), {
-    type: "image/jpeg",
+  return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+    type: 'image/jpeg',
     lastModified: Date.now(),
   });
 }
@@ -68,13 +68,13 @@ function validateFile(file: File, maxSizeMB: number, types: string[]) {
     return `File ${file.name} exceeds ${maxSizeMB}MB limit`;
   }
   if (!types.includes(file.type)) {
-    return `File type ${file.type || "unknown"} not allowed`;
+    return `File type ${file.type || 'unknown'} not allowed`;
   }
   return null;
 }
 
 export function FileUpload({
-  uploadPath = "uploads",
+  uploadPath = 'uploads',
   maxSizeMB = 100,
   allowedTypes = DEFAULT_ALLOWED,
   onUploaded,
@@ -83,27 +83,27 @@ export function FileUpload({
   const [uploads, setUploads] = useState<UploadState[]>([]);
   const [dragging, setDragging] = useState(false);
 
-  const acceptAttr = useMemo(() => allowedTypes.join(","), [allowedTypes]);
+  const acceptAttr = useMemo(() => allowedTypes.join(','), [allowedTypes]);
 
   const startUpload = useCallback(
     async (file: File) => {
       const id = crypto.randomUUID();
-      setUploads((prev) => [...prev, { id, name: file.name, status: "pending", progress: 0 }]);
+      setUploads((prev) => [...prev, { id, name: file.name, status: 'pending', progress: 0 }]);
 
       const compressed = await compressImage(file);
       const form = new FormData();
-      form.append("file", compressed);
-      form.append("path", uploadPath);
+      form.append('file', compressed);
+      form.append('path', uploadPath);
 
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/upload");
+      xhr.open('POST', '/api/upload');
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
         const percent = Math.round((event.loaded / event.total) * 100);
         setUploads((prev) =>
-          prev.map((u) => (u.id === id ? { ...u, progress: percent, status: "uploading" } : u))
+          prev.map((u) => (u.id === id ? { ...u, progress: percent, status: 'uploading' } : u))
         );
       };
       xhr.onreadystatechange = () => {
@@ -112,21 +112,21 @@ export function FileUpload({
             const response: UploadedResponse = JSON.parse(xhr.responseText);
             setUploads((prev) =>
               prev.map((u) =>
-                u.id === id ? { ...u, status: "done", progress: 100, response } : u
+                u.id === id ? { ...u, status: 'done', progress: 100, response } : u
               )
             );
             onUploaded?.(response);
           } else {
-            const error = xhr.responseText || "Upload failed";
+            const error = xhr.responseText || 'Upload failed';
             setUploads((prev) =>
-              prev.map((u) => (u.id === id ? { ...u, status: "error", error } : u))
+              prev.map((u) => (u.id === id ? { ...u, status: 'error', error } : u))
             );
           }
         }
       };
       xhr.onerror = () => {
         setUploads((prev) =>
-          prev.map((u) => (u.id === id ? { ...u, status: "error", error: "Network error" } : u))
+          prev.map((u) => (u.id === id ? { ...u, status: 'error', error: 'Network error' } : u))
         );
       };
 
@@ -143,7 +143,7 @@ export function FileUpload({
         if (validation) {
           setUploads((prev) => [
             ...prev,
-            { id: crypto.randomUUID(), name: file.name, status: "error", progress: 0, error: validation },
+            { id: crypto.randomUUID(), name: file.name, status: 'error', progress: 0, error: validation },
           ]);
           continue;
         }
@@ -167,7 +167,7 @@ export function FileUpload({
   return (
     <div className="space-y-4">
       <div
-        className={`border-2 border-dashed rounded-lg p-6 transition ${dragging ? "border-blue-500 bg-blue-50" : "border-gray-300"}`}
+        className={`border-2 border-dashed rounded-lg p-6 transition ${dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -185,7 +185,7 @@ export function FileUpload({
             Browse
           </button>
           <p className="text-xs text-gray-500">
-            Allowed: {allowedTypes.join(", ")} • Max {maxSizeMB}MB
+            Allowed: {allowedTypes.join(', ')} • Max {maxSizeMB}MB
           </p>
         </div>
         <input
@@ -209,7 +209,7 @@ export function FileUpload({
               <p className="text-xs text-gray-500">{upload.status}</p>
               <div className="h-2 bg-gray-100 rounded mt-1">
                 <div
-                  className={`h-2 rounded ${upload.status === "error" ? "bg-red-500" : "bg-blue-600"}`}
+                  className={`h-2 rounded ${upload.status === 'error' ? 'bg-red-500' : 'bg-blue-600'}`}
                   style={{ width: `${upload.progress}%` }}
                 />
               </div>

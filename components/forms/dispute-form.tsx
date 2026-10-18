@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import type { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +28,18 @@ import { Loader2 } from 'lucide-react';
 
 type FormValues = DisputeFormInput;
 
+/**
+ * Form for filing a dispute against a counterparty on an order/bounty.
+ *
+ * Validates input with `disputeFormInputSchema`, then calls `fileDispute` to
+ * create the dispute record and optionally `addEvidence` to attach a single
+ * hashed evidence file. Evidence is hashed (SHA-256) and its metadata stored;
+ * the actual file bytes are not persisted in this demo implementation.
+ *
+ * @param userId - id of the user filing the dispute
+ * @param userName - display name of the user filing the dispute
+ * @param onFiled - callback invoked with the created `DisputeRecord` once filing succeeds
+ */
 export function DisputeForm({
   userId,
   userName,
@@ -47,7 +60,7 @@ export function DisputeForm({
     setValue,
     formState: { errors, isSubmitting },
     reset,
-  } = useForm<FormValues>({
+  } = useForm<z.input<typeof disputeFormInputSchema>, unknown, FormValues>({
     resolver: zodResolver(disputeFormInputSchema),
     defaultValues: {
       title: '',

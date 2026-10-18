@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import type Stripe from 'stripe'
-import { processStripeWebhookEvent } from '@/app/api/webhooks/stripe/route'
+import { processStripeWebhookEvent } from '@/lib/payments/stripe-webhook'
 import {
   __resetEscrowStoreForTests,
   createEscrow,

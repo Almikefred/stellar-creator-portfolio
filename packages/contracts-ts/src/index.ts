@@ -4,3 +4,5 @@ export * as bounty from './bounty/index.js';
 export * as escrow from './escrow/index.js';
 export * as freelancer from './freelancer/index.js';
 export * as governance from './governance/index.js';
+export * as identity from './identity/index.js';
+export * as oracle from './oracle/index.js';

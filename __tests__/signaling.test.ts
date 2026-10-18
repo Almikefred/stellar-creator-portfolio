@@ -1,5 +1,5 @@
 /**
- * Tests for server/signaling.ts  (#637)
+ * Tests for server/realtime/signaling.ts  (#637)
  *
  * Since the signaling server is a standalone Node.js process, we test the
  * pure utility functions (credential generation, message parsing, room logic)
@@ -15,10 +15,10 @@
  *  - Credential expiry timestamp is in the future
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHmac } from 'crypto';
 
-// ── TURN credential utilities (extracted from server/signaling.ts) ────────────
+// ── TURN credential utilities (extracted from server/realtime/signaling.ts) ────────────
 
 const TURN_SECRET = 'test-secret-for-unit-tests';
 const TURN_HOST = 'turn.example.com';
@@ -163,6 +163,13 @@ describe('buildIceServers()', () => {
 });
 
 // ── API route tests ──────────────────────────────────────────────────────────
+
+// The route now requires an authenticated session (#1124) -- mock a signed-in
+// user so these tests exercise the actual relay/credential logic rather than
+// hitting the 401 path.
+vi.mock('@/lib/auth/auth', () => ({
+  getServerSession: async () => ({ user: { id: 'test-user-1' } }),
+}));
 
 // Mock Next.js modules for route testing
 vi.mock('next/server', () => ({

@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { getSecret } from '@/backend/services/kms';
+import { getSecret } from '@/server/services/kms';
 
 /**
  * Server-side Stripe client.  The secret key is resolved through the KMS

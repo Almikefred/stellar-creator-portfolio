@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
+import * as React from 'react';
+import { ChartContainer, type ChartConfig } from '@/components/ui/chart';
 
 /**
  * SSR-safe chart wrapper that prevents hydration mismatches
@@ -12,7 +12,7 @@ interface ChartWrapperProps {
   id?: string;
   className?: string;
   config: ChartConfig;
-  children: React.ReactNode;
+  children: React.ComponentProps<typeof ChartContainer>['children'];
 }
 
 export function ChartWrapper({
@@ -32,7 +32,7 @@ export function ChartWrapper({
     return (
       <div
         className={className}
-        style={{ aspectRatio: "16 / 9" }}
+        style={{ aspectRatio: '16 / 9' }}
         suppressHydrationWarning
       />
     );

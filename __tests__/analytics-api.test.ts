@@ -1,14 +1,24 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
  * Analytics API integration tests.
  *
  * We import the route handler directly and invoke it with a crafted
- * NextRequest — no running server required.
+ * NextRequest — no running server required. The route is session-gated, so
+ * next-auth is mocked to supply (or withhold) a signed-in user.
  */
+
+const { getServerSession } = vi.hoisted(() => ({ getServerSession: vi.fn() }))
+
+vi.mock('next-auth', () => ({ getServerSession }))
+vi.mock('@/lib/auth/config', () => ({ authOptions: {} }))
 
 import { GET } from '@/app/api/analytics/route'
 import { NextRequest } from 'next/server'
+
+beforeEach(() => {
+  getServerSession.mockResolvedValue({ user: { id: 'user-1' } })
+})
 
 function makeRequest(params: Record<string, string> = {}) {
   const url = new URL('http://localhost:3000/api/analytics')
@@ -19,6 +29,12 @@ function makeRequest(params: Record<string, string> = {}) {
 }
 
 describe('GET /api/analytics', () => {
+  it('returns 401 without a session', async () => {
+    getServerSession.mockResolvedValue(null)
+    const res = await GET(makeRequest({ preset: '30d' }))
+    expect(res.status).toBe(401)
+  })
+
   it('returns 200 with valid preset', async () => {
     const res = await GET(makeRequest({ preset: '30d' }))
     expect(res.status).toBe(200)

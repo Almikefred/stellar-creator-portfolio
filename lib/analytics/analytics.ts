@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 type EventProps = Record<string, string | number | boolean | null | undefined>;
 
@@ -18,29 +18,29 @@ const invokePlausible = (
   props?: EventProps,
   urlOverride?: string
 ) => {
-  if (typeof window === "undefined") return;
+  if (typeof window === 'undefined') return;
   const plausible = window.plausible || noop;
   plausible(eventName, { props, u: urlOverride });
 };
 
 export const trackPageview = (url?: string, referrer?: string) => {
-  invokePlausible("pageview", { url, referrer });
+  invokePlausible('pageview', { url, referrer });
 };
 
 export const trackJourneyStep = (from: string, to: string) => {
-  invokePlausible("journey-step", { from, to });
+  invokePlausible('journey-step', { from, to });
 };
 
 export const trackConversion = (
   stage:
-    | "view"
-    | "start_application"
-    | "complete_application"
-    | "cta_click"
-    | "signup",
+    | 'view'
+    | 'start_application'
+    | 'complete_application'
+    | 'cta_click'
+    | 'signup',
   extra?: EventProps
 ) => {
-  invokePlausible("conversion", { stage, ...extra });
+  invokePlausible('conversion', { stage, ...extra });
 };
 
 export const trackEvent = (name: string, props?: EventProps) => {
@@ -48,14 +48,14 @@ export const trackEvent = (name: string, props?: EventProps) => {
 };
 
 export const trackFeatureUse = (feature: string, props?: EventProps) => {
-  invokePlausible("feature-used", { feature, ...props });
+  invokePlausible('feature-used', { feature, ...props });
 };
 
 export const trackSearch = (
   query: string,
   filters?: { [key: string]: string | number | boolean }
 ) => {
-  invokePlausible("search", { query, ...(filters || {}) });
+  invokePlausible('search', { query, ...(filters || {}) });
 };
 
 export const trackFilterUsage = (
@@ -63,7 +63,7 @@ export const trackFilterUsage = (
   value: string | number | boolean,
   location?: string
 ) => {
-  invokePlausible("filter", { filterName, value, location });
+  invokePlausible('filter', { filterName, value, location });
 };
 
 export const trackHeatmapClick = (
@@ -71,7 +71,7 @@ export const trackHeatmapClick = (
   xRatio: number,
   yRatio: number
 ) => {
-  invokePlausible("heatmap-click", {
+  invokePlausible('heatmap-click', {
     path,
     x: Number(xRatio.toFixed(3)),
     y: Number(yRatio.toFixed(3)),
@@ -79,25 +79,25 @@ export const trackHeatmapClick = (
 };
 
 export const trackScrollDepth = (path: string, depth: number) => {
-  invokePlausible("scroll-depth", {
+  invokePlausible('scroll-depth', {
     path,
     depth: Math.min(100, Math.max(0, Math.round(depth))),
   });
 };
 
 export const trackCreatorOrBountyView = (
-  type: "creator" | "bounty",
+  type: 'creator' | 'bounty',
   slug: string
 ) => {
   invokePlausible(`${type}-view`, { slug });
 };
 
 export const trackSessionStart = (path: string) => {
-  invokePlausible("session-start", { path });
+  invokePlausible('session-start', { path });
 };
 
 export const trackError = (message: string, path?: string) => {
-  invokePlausible("client-error", { message, path });
+  invokePlausible('client-error', { message, path });
 };
 
 export const withSafeTracking = <T extends (...args: any[]) => void>(

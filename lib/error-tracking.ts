@@ -25,10 +25,47 @@ export interface ErrorReport {
   environment?: string;
 }
 
+/** The subset of the @sentry/nextjs API this module calls. */
+interface SentryLike {
+  init(options: Record<string, unknown>): void;
+  captureException(error: unknown, hint?: Record<string, unknown>): void;
+  setUser(user: { id: string; email?: string } | null): void;
+  addBreadcrumb(breadcrumb: Record<string, unknown>): void;
+  Replay?: new (options: Record<string, unknown>) => unknown;
+}
+
+let sentryPromise: Promise<SentryLike | null> | undefined;
+
+/**
+ * Loads @sentry/nextjs when a DSN is configured and the package is
+ * installed; resolves to null otherwise. Sentry is an optional integration:
+ * the specifier is held in a variable so neither the bundler nor tsc treats
+ * it as a hard dependency of the app.
+ */
+function loadSentry(): Promise<SentryLike | null> {
+  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return Promise.resolve(null);
+  if (!sentryPromise) {
+    const specifier = '@sentry/nextjs';
+    sentryPromise = import(/* webpackIgnore: true */ /* turbopackIgnore: true */ specifier)
+      .then((mod) => mod as SentryLike)
+      .catch(() => {
+        console.warn('[ErrorTracker] NEXT_PUBLIC_SENTRY_DSN is set but @sentry/nextjs is not installed');
+        return null;
+      });
+  }
+  return sentryPromise;
+}
+
 class ErrorTracker {
   private sessionId: string;
   private isInitialized = false;
-  private enableTracking = true;
+  /**
+   * Read on every use rather than cached at initialize(), so errors captured
+   * before initialisation still honour the opt-out.
+   */
+  private get enableTracking(): boolean {
+    return process.env.NEXT_PUBLIC_ENABLE_ERROR_TRACKING !== 'false';
+  }
 
   constructor() {
     this.sessionId = this.generateSessionId();
@@ -39,8 +76,6 @@ class ErrorTracker {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
-
-    this.enableTracking = process.env.NEXT_PUBLIC_ENABLE_ERROR_TRACKING !== 'false';
 
     if (!this.enableTracking) {
       console.log('[ErrorTracker] Error tracking disabled');
@@ -66,17 +101,15 @@ class ErrorTracker {
     }
 
     try {
-      const Sentry = await import('@sentry/nextjs');
+      const Sentry = await loadSentry();
+      if (!Sentry) return;
       Sentry.init({
         dsn,
         environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || 'development',
         tracesSampleRate: 1.0,
-        integrations: [
-          new Sentry.Replay({
-            maskAllText: true,
-            blockAllMedia: true,
-          }),
-        ],
+        integrations: Sentry.Replay
+          ? [new Sentry.Replay({ maskAllText: true, blockAllMedia: true })]
+          : [],
         replaySessionSampleRate: 0.1,
         replayOnErrorSampleRate: 1.0,
       });
@@ -165,7 +198,8 @@ class ErrorTracker {
     context: ErrorContext,
   ): Promise<void> {
     try {
-      const Sentry = await import('@sentry/nextjs');
+      const Sentry = await loadSentry();
+      if (!Sentry) return;
       Sentry.captureException(error, {
         tags: {
           component: context.component,
@@ -215,27 +249,14 @@ class ErrorTracker {
    * Set user context for error tracking
    */
   setUserContext(userId: string, userEmail?: string): void {
-    try {
-      const Sentry = require('@sentry/nextjs');
-      Sentry.setUser({
-        id: userId,
-        email: userEmail,
-      });
-    } catch (error) {
-      console.error('[ErrorTracker] Failed to set user context:', error);
-    }
+    void loadSentry().then((Sentry) => Sentry?.setUser({ id: userId, email: userEmail }));
   }
 
   /**
    * Clear user context
    */
   clearUserContext(): void {
-    try {
-      const Sentry = require('@sentry/nextjs');
-      Sentry.setUser(null);
-    } catch (error) {
-      console.error('[ErrorTracker] Failed to clear user context:', error);
-    }
+    void loadSentry().then((Sentry) => Sentry?.setUser(null));
   }
 
   /**
@@ -246,17 +267,10 @@ class ErrorTracker {
     category: string = 'user-action',
     level: 'info' | 'warning' | 'error' = 'info',
   ): void {
-    try {
-      const Sentry = require('@sentry/nextjs');
-      Sentry.addBreadcrumb({
-        message,
-        category,
-        level,
-        timestamp: Date.now() / 1000,
-      });
-    } catch (error) {
-      console.error('[ErrorTracker] Failed to add breadcrumb:', error);
-    }
+    const timestamp = Date.now() / 1000;
+    void loadSentry().then((Sentry) =>
+      Sentry?.addBreadcrumb({ message, category, level, timestamp }),
+    );
   }
 
   /**

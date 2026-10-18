@@ -1,18 +1,38 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useCallback, useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { trackEvent } from "@/lib/analytics/analytics";
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton } from '@/components/ui/skeleton';
+import { trackEvent } from '@/lib/analytics/analytics';
+import { formatDate } from '@/lib/utils';
+
+/** Placeholder shown while the key list loads; mirrors the two sections below. */
+function ApiKeysSkeleton() {
+  return (
+    <div className="space-y-8" aria-busy="true" aria-label="Loading API keys">
+      <div className="rounded-lg border p-6 space-y-4">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-32" />
+      </div>
+      <div className="rounded-lg border p-6 space-y-3">
+        <Skeleton className="h-6 w-32" />
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-12 w-full" />
+      </div>
+    </div>
+  );
+}
 
 interface ApiKeyRecord {
   id: string;
@@ -23,16 +43,20 @@ interface ApiKeyRecord {
   createdAt: string;
 }
 
+/**
+ * Dashboard panel for creating, listing, and revoking a user's API keys —
+ * name, scopes, and optional expiry — with usage tracked via `trackEvent`.
+ */
 export function ApiKeysManager() {
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
-  const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<string[]>(["read-only"]);
-  const [expiryDays, setExpiryDays] = useState("90");
+  const [name, setName] = useState('');
+  const [scopes, setScopes] = useState<string[]>(['read-only']);
+  const [expiryDays, setExpiryDays] = useState('90');
   const [newKey, setNewKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadKeys = useCallback(async () => {
-    const res = await fetch("/api/developer/keys");
+    const res = await fetch('/api/developer/keys');
     if (res.ok) {
       const data = await res.json();
       setKeys(data.keys);
@@ -45,40 +69,42 @@ export function ApiKeysManager() {
   }, [loadKeys]);
 
   const toggleScope = (scope: string) => {
-    setScopes((prev) =>
-      prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope],
+    setScopes((prevScopes) =>
+      prevScopes.includes(scope)
+        ? prevScopes.filter((existingScope) => existingScope !== scope)
+        : [...prevScopes, scope],
     );
   };
 
   const createKey = async () => {
     const expiresAt =
-      expiryDays === "never"
+      expiryDays === 'never'
         ? undefined
         : new Date(Date.now() + Number(expiryDays) * 86400000).toISOString();
 
-    const res = await fetch("/api/developer/keys", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const res = await fetch('/api/developer/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, scopes, expiresAt }),
     });
 
     if (res.ok) {
       const data = await res.json();
       setNewKey(data.rawKey);
-      setName("");
-      trackEvent("api_key_created", { scopes: scopes.join(",") });
+      setName('');
+      trackEvent('api_key_created', { scopes: scopes.join(',') });
       await loadKeys();
     }
   };
 
   const revokeKey = async (id: string) => {
-    await fetch(`/api/developer/keys/${id}`, { method: "DELETE" });
-    trackEvent("api_key_revoked", { id });
+    await fetch(`/api/developer/keys/${id}`, { method: 'DELETE' });
+    trackEvent('api_key_revoked', { id });
     await loadKeys();
   };
 
   if (loading) {
-    return <p className="text-muted-foreground">Loading API keys…</p>;
+    return <ApiKeysSkeleton />;
   }
 
   return (
@@ -97,7 +123,7 @@ export function ApiKeysManager() {
         <div className="space-y-2">
           <Label>Permission scopes</Label>
           <div className="flex gap-4">
-            {(["read-only", "read-write"] as const).map((scope) => (
+            {(['read-only', 'read-write'] as const).map((scope) => (
               <label key={scope} className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={scopes.includes(scope)}
@@ -146,16 +172,21 @@ export function ApiKeysManager() {
                 <div>
                   <p className="font-medium">{key.name}</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Scopes: {key.scopes.join(", ")} · Created{" "}
-                    {new Date(key.createdAt).toLocaleDateString()}
+                    Scopes: {key.scopes.join(', ')} · Created{' '}
+                    {formatDate(key.createdAt, 'default')}
                     {key.lastUsedAt &&
-                      ` · Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`}
+                      ` · Last used ${formatDate(key.lastUsedAt, 'default')}`}
                   </p>
                   <div className="mt-2 h-8 w-48 rounded bg-muted/60 flex items-center justify-center text-xs text-muted-foreground">
                     Usage graph (requests/day)
                   </div>
                 </div>
-                <Button variant="destructive" size="sm" onClick={() => revokeKey(key.id)}>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  aria-label={`Revoke API key ${key.name}`}
+                  onClick={() => revokeKey(key.id)}
+                >
                   Revoke
                 </Button>
               </li>

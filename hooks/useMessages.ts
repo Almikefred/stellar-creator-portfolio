@@ -64,7 +64,7 @@ async function deriveKey(passphrase: string, threadId: string) {
 async function encryptText(plaintext: string, key: CryptoKey) {
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const ciphertextBuffer = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, textEncoder.encode(plaintext))
-  return { ciphertext: base64FromArrayBuffer(ciphertextBuffer), iv: base64FromArrayBuffer(iv) }
+  return { ciphertext: base64FromArrayBuffer(ciphertextBuffer), iv: base64FromArrayBuffer(iv.buffer) }
 }
 
 async function decryptText(ciphertext: string, iv: string, key: CryptoKey) {
