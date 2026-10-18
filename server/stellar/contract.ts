@@ -9,6 +9,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { stellarClient } from './client';
 import { Signer } from './types';
+import { encodeContractArgs } from '@/lib/soroban/contract-clients';
 
 export class ContractService {
   /**
@@ -53,7 +54,10 @@ export class ContractService {
     // rpcServer.getAccount() already returns a fully-formed Account instance
     // (accountId + sequence number) - use it directly rather than
     // re-wrapping it.
-    const call = contract.call(method, ...args.map((arg) => nativeToScVal(arg)));
+    const call = contract.call(
+      method,
+      ...encodeContractArgs(contractId, method, args, { rpcUrl: stellarClient.config.rpcUrl, networkPassphrase })
+    );
     let tx: Transaction = new TransactionBuilder(
       sourceAccount,
       {

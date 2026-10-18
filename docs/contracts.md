@@ -24,7 +24,7 @@ flowchart LR
     REL --> VAL[validate-release\nsemver tag, not a pre-release]
     VAL --> SIM[simulate-contracts\nsimulate against 2 RPC endpoints]
     SIM --> APPROVAL{{mainnet environment\nreviewer approval}}
-    APPROVAL --> DEPLOY[deploy-contracts job\nnode scripts/deploy.js]
+    APPROVAL --> DEPLOY[deploy-contracts job\nnode scripts/deploy.cjs]
     DEPLOY --> FE[deploy-frontend\nVercel production, contract IDs baked in]
 ```
 
@@ -36,16 +36,18 @@ flowchart LR
    workspace.
 2. `build` — installs `stellar-cli`, builds the bounty / escrow /
    freelancer / governance / oracle / identity contract packages for
-   `wasm32-unknown-unknown` (not `wasm32v1-none`; see the comment in the
-   workflow — the contracts in this workspace aren't `std`-less), then runs
+   `wasm32v1-none` (soroban-sdk 23 refuses `wasm32-unknown-unknown` on
+   Rust ≥ 1.82), then runs
    `stellar contract optimize` on each `.wasm` and uploads them as a build
    artifact (`contract-wasm-${{ github.sha }}`).
 3. `deploy-testnet` — downloads that artifact and runs
-   [`scripts/deploy.js`](../scripts/deploy.js) against
+   [`scripts/deploy.cjs`](../scripts/deploy.cjs) against
    `https://soroban-testnet.stellar.org` using the `TESTNET_DEPLOYER_SECRET`
-   repository secret, then writes `contracts.json` (network, commit SHA,
-   timestamp, and each contract's deployed ID) and uploads it as its own
-   artifact (`contracts-testnet-${{ github.sha }}`).
+   repository secret (or a throwaway Friendbot identity when unset). It
+   writes `contracts.json` and
+   [`deployments/testnet.json`](../deployments/testnet.json), uploads both as
+   the `contracts-testnet-${{ github.sha }}` artifact, and commits the
+   manifest back to the branch (see [`docs/deployments.md`](./deployments.md)).
 4. `notify` — posts success/failure to Slack (if `SLACK_WEBHOOK_URL` is
    set) and writes a `$GITHUB_STEP_SUMMARY`.
 
@@ -56,15 +58,15 @@ flowchart LR
    rejected). This is the only gate that stands between a release and a
    mainnet deploy, so it fails closed.
 2. `simulate-contracts` — rebuilds the same packages, reruns the unit
-   tests, then runs `node scripts/deploy.js --simulate-only` against the
+   tests, then runs `node scripts/deploy.cjs --simulate-only` against the
    primary Mainnet RPC (blocking) and again against a secondary RPC
    provider for cross-validation (warning-only, so a degraded secondary
    doesn't block a release).
 3. `deploy-contracts` — gated on the `mainnet` GitHub Environment (configure
    required reviewers there — this is what makes the deploy "manual
-   approval" in practice). Runs `node scripts/deploy.js` for real against
-   Mainnet with `MAINNET_DEPLOYER_SECRET`, and exposes each contract ID as a
-   job output.
+   approval" in practice). Runs `node scripts/deploy.cjs --manifest deployments/mainnet.json` for
+   real against Mainnet with `MAINNET_DEPLOYER_SECRET`, exposes each contract
+   ID as a job output, and attaches `deployments/mainnet.json` to the release.
 4. `deploy-frontend` — builds the Next.js app with
    `NEXT_PUBLIC_{BOUNTY,ESCROW,FREELANCER,GOVERNANCE,ORACLE,IDENTITY}_CONTRACT_ID`
    set from the previous job's outputs, then deploys to Vercel production.
@@ -72,21 +74,20 @@ flowchart LR
 
 ## Where contract addresses go
 
-There is no single "contracts registry" file in the repo — addresses are
-produced per deploy and consumed by whichever layer needs them:
+Addresses are published to committed manifests under
+[`deployments/`](../deployments). See [`docs/deployments.md`](./deployments.md)
+for the schema; the app reads them via `lib/contracts/deployments.ts`.
 
-- **Testnet**: written to `contracts.json` and uploaded as the
-  `contracts-testnet-${{ github.sha }}` build artifact. There's no automatic
-  publish step beyond that artifact today; if you need the Testnet IDs
-  outside of CI, download that artifact from the workflow run (see
-  `docs/contracts.md#promoting-to-mainnet` for the equivalent idea applied to
-  Mainnet).
+- **Testnet**: [`deployments/testnet.json`](../deployments/testnet.json),
+  committed by `deploy-contracts.yml` after every deploy (also uploaded in the
+  `contracts-testnet-${{ github.sha }}` artifact alongside `contracts.json`).
 - **Mainnet**: emitted as `deploy-contracts` job outputs
   (`bounty_contract_id`, `escrow_contract_id`, `freelancer_contract_id`,
   `governance_contract_id`, `oracle_contract_id`, `identity_contract_id`),
   which `deploy-frontend` reads directly and bakes into the Next.js build as
   `NEXT_PUBLIC_*_CONTRACT_ID`. They are also broadcast to Slack/Discord and
-  the GitHub Actions run summary for a human-readable record of what's live.
+  the GitHub Actions run summary for a human-readable record of what's live,
+  and `deployments/mainnet.json` is attached to the GitHub release.
 - **Local dev**: `.env.local` (see `.env.example`) — there is no automated
   sync from a deploy back into `.env.example`; update it by hand after a
   Mainnet/Testnet address changes if local tooling needs to point at it.
@@ -130,7 +131,7 @@ does not migrate storage for you.
 Safe upgrade procedure:
 
 1. Build and optimize the new `.wasm` the same way CI does (`cargo build
-   --release --target wasm32-unknown-unknown`, then `stellar contract
+   --release --target wasm32v1-none`, then `stellar contract
    optimize`) so the deployed bytecode matches what was reviewed.
 2. Upload the new wasm to get its hash:
    `stellar contract upload --wasm <path> --source <admin-identity> --network <network>`.

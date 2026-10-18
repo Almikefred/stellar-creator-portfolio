@@ -4,7 +4,7 @@
 # Builds all Soroban contracts inside the pinned Docker environment and copies
 # the WASM artifacts + their SHA-256 hashes to ./artifacts/.
 #
-# The Docker image pins Rust 1.74.0 and stellar-cli 20.3.1 so outputs are
+# The Docker image pins Rust 1.89.0 and stellar-cli 20.3.1 so outputs are
 # byte-for-byte identical regardless of where this runs (CI or local).
 # Bump those pins deliberately and re-baseline with scripts/verify.sh --update-baseline.
 #
@@ -25,7 +25,7 @@ ARTIFACTS_DIR="$REPO_ROOT/artifacts"
 IMAGE_TAG="stellar-contracts-builder:local"
 
 # Pinned tool versions — must match Dockerfile.
-RUST_VERSION="1.74.0"
+RUST_VERSION="1.89.0"
 STELLAR_CLI_VERSION="20.3.1"
 
 echo "🔨 Building reproducible contracts…"
@@ -67,7 +67,7 @@ CONTRACTS=(bounty core escrow freelancer governance identity insurance oracle re
 
 for CONTRACT in "${CONTRACTS[@]}"; do
   docker run --rm --entrypoint cat "$IMAGE_TAG" \
-    "/build/target/wasm32-unknown-unknown/release/${CONTRACT}.wasm" \
+    "/build/target/wasm32v1-none/release/${CONTRACT}.wasm" \
     > "$ARTIFACTS_DIR/${CONTRACT}.wasm"
   echo "  ✅ Extracted ${CONTRACT}.wasm"
 done

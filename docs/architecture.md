@@ -120,10 +120,8 @@ flowchart TB
   Next.js-side equivalents without checking which one a given feature
   actually reads from — they are not interchangeable today.
 - **Soroban contracts** (`backend/contracts/`) — canonical on-chain logic.
-  The top-level `contracts/` directory (not pictured here) is legacy/
-  scaffold and not built by CI — see the note in the root
-  [README's Project Structure section](../README.md#project-structure)
-  before touching it.
+  The legacy top-level `contracts/` tree was archived (removed); see the
+  note in the root [README's Project Structure section](../README.md#project-structure).
 - **Data stores** — Postgres (Prisma) is the system of record; Redis and
   S3 are used from `lib/storage/` for caching/rate-limiting and object
   storage respectively. Both the TS and Rust indexers write Soroban

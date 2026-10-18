@@ -30,7 +30,7 @@ items below have been implemented here.
 
 - The actual gap is in
   [.github/workflows/deploy-mainnet.yml](../.github/workflows/deploy-mainnet.yml): the
-  `simulate-contracts` and `deploy-contracts` jobs both invoke `node scripts/deploy.js`
+  `simulate-contracts` and `deploy-contracts` jobs both invoke `node scripts/deploy.cjs`
   directly (`--simulate-only` and full run, respectively) with **no `actions/setup-node`
   step at all** — Node comes from whatever `ubuntu-latest` ships with that day. The
   `deploy-frontend` job in the same workflow, by contrast, already pins

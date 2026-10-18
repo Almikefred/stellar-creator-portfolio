@@ -1,4 +1,8 @@
 #![no_std]
+// `Events::publish` is deprecated in soroban-sdk 23 in favour of `#[contractevent]`.
+// Migrating changes the on-chain event topic/data layout the indexer decodes,
+// so it is kept as-is for the SDK upgrade and tracked as a separate change.
+#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env,
@@ -127,7 +131,7 @@ mod test {
     fn test_register_referral() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = ReferralContractClient::new(&env, &env.register_contract(None, ReferralContract));
+        let contract = ReferralContractClient::new(&env, &env.register(ReferralContract, ()));
 
         let admin = Address::generate(&env);
         let reward_token = Address::generate(&env);
@@ -146,7 +150,7 @@ mod test {
     fn test_award_and_claim_reward() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = ReferralContractClient::new(&env, &env.register_contract(None, ReferralContract));
+        let contract = ReferralContractClient::new(&env, &env.register(ReferralContract, ()));
 
         let admin = Address::generate(&env);
         let reward_token = Address::generate(&env);
