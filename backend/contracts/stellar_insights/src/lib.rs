@@ -1,4 +1,8 @@
 #![no_std]
+// `Events::publish` is deprecated in soroban-sdk 23 in favour of `#[contractevent]`.
+// Migrating changes the on-chain event topic/data layout the indexer decodes,
+// so it is kept as-is for the SDK upgrade and tracked as a separate change.
+#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token,
@@ -358,7 +362,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let (admin, token, challenger, _) = setup(&env);
-        let contract_id = env.register_contract(None, StellarInsights);
+        let contract_id = env.register(StellarInsights, ());
         let contract = StellarInsightsClient::new(&env, &contract_id);
 
         contract.initialize(&admin, &token);
@@ -379,7 +383,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let (admin, token, challenger, _) = setup(&env);
-        let contract_id = env.register_contract(None, StellarInsights);
+        let contract_id = env.register(StellarInsights, ());
         let contract = StellarInsightsClient::new(&env, &contract_id);
 
         contract.initialize(&admin, &token);
@@ -401,7 +405,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let (admin, token, challenger, _) = setup(&env);
-        let contract_id = env.register_contract(None, StellarInsights);
+        let contract_id = env.register(StellarInsights, ());
         let contract = StellarInsightsClient::new(&env, &contract_id);
 
         contract.initialize(&admin, &token);

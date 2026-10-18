@@ -266,7 +266,7 @@ mod test {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, FreelancerContract);
+        let contract_id = env.register(FreelancerContract, ());
         let client = FreelancerContractClient::new(&env, &contract_id);
 
         let user = Address::generate(&env);
@@ -286,7 +286,7 @@ mod test {
     #[should_panic(expected = "Identity metadata not found")]
     fn test_get_nonexistent_identity() {
         let env = Env::default();
-        let contract_id = env.register_contract(None, FreelancerContract);
+        let contract_id = env.register(FreelancerContract, ());
         let client = FreelancerContractClient::new(&env, &contract_id);
 
         let user = Address::generate(&env);

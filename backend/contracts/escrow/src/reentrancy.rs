@@ -1,5 +1,3 @@
-#![no_std]
-
 //! Cross-contract reentrancy protection framework (#635).
 //!
 //! Soroban contracts are vulnerable to reentrancy when they make cross-contract

@@ -1,0 +1,17 @@
+{
+  "name": "@stellar-creator/contracts-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Generated TypeScript bindings for the canonical Soroban contracts in backend/contracts. Regenerate with scripts/generate-contract-bindings.sh; do not edit src/<contract>/ by hand.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bounty": "./src/bounty/index.ts",
+    "./escrow": "./src/escrow/index.ts",
+    "./freelancer": "./src/freelancer/index.ts",
+    "./governance": "./src/governance/index.ts"
+  },
+  "peerDependencies": {
+    "@stellar/stellar-sdk": "17.2.1"
+  }
+}

@@ -31,7 +31,7 @@ mkdir -p "$ARTIFACTS_DIR"
 
 for CONTRACT in bounty escrow freelancer governance; do
   docker run --rm --entrypoint cat "$IMAGE_TAG" \
-    "/build/target/wasm32-unknown-unknown/release/${CONTRACT}.wasm" \
+    "/build/target/wasm32v1-none/release/stellar_${CONTRACT}_contract.wasm" \
     > "$ARTIFACTS_DIR/${CONTRACT}.wasm"
   echo "  ✅ Extracted ${CONTRACT}.wasm"
 done

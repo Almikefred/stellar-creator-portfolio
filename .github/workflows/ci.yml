@@ -50,6 +50,43 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Test Contracts
         run: cd backend && cargo test --all-features
+      - name: Contract resource benchmarks
+        # Emits ::warning:: annotations for entrypoints >10% over
+        # backend/contracts/benchmarks.json without failing the job.
+        run: cd backend && cargo test -p contract-benchmarks -- --nocapture
+
+  contract-bindings:
+    name: Contract TypeScript Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install
+      - name: Regenerate bindings
+        run: ./scripts/generate-contract-bindings.sh
+      - name: Fail if committed bindings are stale
+        run: |
+          if [ -n "$(git status --porcelain -- packages/contracts-ts)" ]; then
+            git status --short -- packages/contracts-ts
+            git diff -- packages/contracts-ts | head -200
+            echo "::error::packages/contracts-ts is out of date. Run ./scripts/generate-contract-bindings.sh and commit the result."
+            exit 1
+          fi
+      - name: Type-check bindings
+        run: pnpm exec tsc -p packages/contracts-ts
 
   reproducible-build:
     name: Verify Reproducible Contract Hashes

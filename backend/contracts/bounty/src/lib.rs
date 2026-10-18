@@ -1,4 +1,8 @@
 #![no_std]
+// `Events::publish` is deprecated in soroban-sdk 23 in favour of `#[contractevent]`.
+// Migrating changes the on-chain event topic/data layout the indexer decodes,
+// so it is kept as-is for the SDK upgrade and tracked as a separate change.
+#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
@@ -17,6 +21,8 @@ pub const PLATFORM_FEE_CAP: i128 = 500;
 pub fn platform_fee(budget: i128) -> i128 {
     let raw = budget * PLATFORM_FEE_BPS / 10_000;
     if raw > PLATFORM_FEE_CAP { PLATFORM_FEE_CAP } else { raw }
+}
+
 // Re-export ReleaseCondition from escrow contract for cross-contract calls
 #[derive(Clone, Debug)]
 #[contracttype]
@@ -45,6 +51,15 @@ pub enum DataKey {
 /// Escrow Contract Client Interface
 #[contractclient(name = "EscrowContractClient")]
 pub trait EscrowContractTrait {
+    fn deposit(
+        env: Env,
+        bounty_id: u64,
+        payer: Address,
+        payee: Address,
+        amount: i128,
+        token: Address,
+        release_condition: ReleaseCondition,
+    ) -> u64;
     fn refund_expired_bounty(env: Env, bounty_id: u64, bounty_contract: Address) -> bool;
 }
 
@@ -463,7 +478,7 @@ impl BountyContract {
     ///
     /// Note: actual fee may vary by up to 10% from this estimate due to network conditions.
     /// The estimate is guaranteed not to exceed actual fee by more than 10%.
-    pub fn estimate_create_bounty_fee(env: Env, budget: i128) -> i128 {
+    pub fn estimate_create_bounty_fee(_env: Env, budget: i128) -> i128 {
         let platform = platform_fee(budget);
         let base_resource = BOUNTY_CREATE_BASE_FEE;
         platform + base_resource
@@ -480,7 +495,7 @@ mod tests {
     fn test_create_bounty() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = BountyContractClient::new(&env, &env.register_contract(None, BountyContract));
+        let contract = BountyContractClient::new(&env, &env.register(BountyContract, ()));
 
         let creator = Address::generate(&env);
         let title = String::from_str(&env, "Test Bounty");
@@ -505,7 +520,7 @@ mod tests {
     fn test_apply_for_bounty() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = BountyContractClient::new(&env, &env.register_contract(None, BountyContract));
+        let contract = BountyContractClient::new(&env, &env.register(BountyContract, ()));
 
         let creator = Address::generate(&env);
         let freelancer = Address::generate(&env);
@@ -536,7 +551,7 @@ mod tests {
     fn test_create_and_fund_bounty() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract = BountyContractClient::new(&env, &env.register_contract(None, BountyContract));
+        let contract = BountyContractClient::new(&env, &env.register(BountyContract, ()));
 
         let creator = Address::generate(&env);
         let token = Address::generate(&env);

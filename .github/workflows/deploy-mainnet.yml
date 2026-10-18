@@ -40,16 +40,15 @@ jobs:
           cargo install --locked stellar-cli --features opt 2>/dev/null || \
           cargo install stellar-cli --features opt
 
-      - name: Build contracts
-        run: cd backend && cargo build --release --target wasm32-unknown-unknown
-
       - name: Run contract unit tests
         run: cd backend && cargo test --all-features
 
       - name: Simulate contracts against Mainnet RPC
         env:
           STELLAR_RPC_URL: ${{ env.MAINNET_RPC_URL }}
-        run: node scripts/deploy.js --simulate-only
+          STELLAR_NETWORK_PASSPHRASE: ${{ env.MAINNET_PASSPHRASE }}
+          WASM_DIR: artifacts
+        run: node scripts/deploy.cjs --simulate-only
         # Exits non-zero if any simulation fails, blocking the deploy.
 
   deploy-contracts:
@@ -57,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: simulate-contracts
     environment: mainnet          # Requires manual approval in GitHub Environments
+    permissions:
+      contents: write             # gh release upload
     outputs:
       bounty_contract_id: ${{ steps.deploy.outputs.bounty_contract_id }}
       escrow_contract_id: ${{ steps.deploy.outputs.escrow_contract_id }}
@@ -79,7 +80,12 @@ jobs:
           STELLAR_NETWORK_PASSPHRASE: ${{ env.MAINNET_PASSPHRASE }}
           STELLAR_ADMIN_SECRET: ${{ secrets.MAINNET_DEPLOYER_SECRET }}
           WASM_DIR: artifacts
-        run: node scripts/deploy.js
+        run: node scripts/deploy.cjs --manifest deployments/mainnet.json
+
+      - name: Attach deployment manifest to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" deployments/mainnet.json --clobber
 
   deploy-frontend:
     name: Deploy Frontend to Production

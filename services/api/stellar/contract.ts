@@ -11,6 +11,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { stellarClient } from './client';
 import { Signer } from './types';
+import { encodeContractArgs } from '@/lib/soroban/contract-clients';
 
 export class ContractService {
   /**
@@ -49,7 +50,10 @@ export class ContractService {
     const sourceAccount = await rpcServer.getAccount(sourcePublicKey);
 
     // 2. Build the initial transaction
-    const call = contract.call(method, ...args.map((arg) => nativeToScVal(arg)));
+    const call = contract.call(
+      method,
+      ...encodeContractArgs(contractId, method, args, { rpcUrl: stellarClient.config.rpcUrl, networkPassphrase })
+    );
     let tx = new TransactionBuilder(
       new Account(sourcePublicKey, sourceAccount.sequence),
       {

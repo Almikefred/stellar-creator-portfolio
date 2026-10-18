@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * scripts/deploy.js
+ * scripts/deploy.cjs
  *
  * Deploys (or simulates) Soroban contracts to the Stellar network.
  *
@@ -11,7 +11,9 @@
  *   STELLAR_ADMIN_SECRET       - Deployer secret key (skipped in --simulate-only)
  *
  * Flags:
- *   --simulate-only  Run preflight simulations only; do not submit transactions.
+ *   --simulate-only    Run preflight simulations only; do not submit transactions.
+ *   --manifest <path>  After deploying, write the contract IDs and WASM hashes to
+ *                      <path> (e.g. deployments/testnet.json). See docs/deployments.md.
  */
 
 "use strict";
@@ -25,6 +27,12 @@ const path = require("path");
 // ---------------------------------------------------------------------------
 
 const SIMULATE_ONLY = process.argv.includes("--simulate-only");
+const manifestFlag = process.argv.indexOf("--manifest");
+const MANIFEST_PATH = manifestFlag !== -1 ? process.argv[manifestFlag + 1] : null;
+if (manifestFlag !== -1 && !MANIFEST_PATH) {
+  console.error("❌ --manifest requires a file path.");
+  process.exit(1);
+}
 
 const NETWORK = process.env.STELLAR_NETWORK;
 const RPC_URL = process.env.STELLAR_RPC_URL;
@@ -46,7 +54,8 @@ if (!RPC_URL) {
 // Contracts to deploy (name → wasm path relative to repo root)
 // ---------------------------------------------------------------------------
 
-const WASM_DIR = process.env.WASM_DIR || "backend/target/wasm32-unknown-unknown/release";
+// Defaults to the output of scripts/build-reproducible.sh.
+const WASM_DIR = process.env.WASM_DIR || "artifacts";
 
 const CONTRACTS = [
   { name: "bounty",     wasm: `${WASM_DIR}/bounty.wasm`,     outputKey: "bounty_contract_id" },
@@ -126,7 +135,31 @@ function deployContract(contract) {
   );
 
   setOutput(contract.outputKey, contractId);
-  return contractId;
+  return { id: contractId, wasmHash };
+}
+
+/**
+ * Write the deployment manifest consumed by the app (lib/contracts/deployments.ts).
+ * Schema: { network, contracts: { name: { id, wasmHash } }, gitSha, deployedAt }
+ */
+function writeManifest(manifestPath, contracts) {
+  let gitSha = process.env.GITHUB_SHA;
+  if (!gitSha) {
+    try {
+      gitSha = run("git rev-parse HEAD");
+    } catch {
+      gitSha = null;
+    }
+  }
+  const manifest = {
+    network: NETWORK,
+    contracts,
+    gitSha,
+    deployedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(path.resolve(manifestPath)), { recursive: true });
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+  console.log(`  📝 Manifest written to ${manifestPath}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,12 +171,17 @@ console.log(`   Network : ${NETWORK ?? "(not set)"}`);
 console.log(`   RPC     : ${RPC_URL}`);
 console.log(`   Mode    : ${SIMULATE_ONLY ? "simulate-only" : "deploy"}\n`);
 
+const deployed = {};
 for (const contract of CONTRACTS) {
   if (SIMULATE_ONLY) {
     simulateContract(contract);
   } else {
-    deployContract(contract);
+    deployed[contract.name] = deployContract(contract);
   }
+}
+
+if (MANIFEST_PATH && !SIMULATE_ONLY) {
+  writeManifest(MANIFEST_PATH, deployed);
 }
 
 console.log(`\n✅ All contracts ${SIMULATE_ONLY ? "simulated" : "deployed"} successfully.\n`);

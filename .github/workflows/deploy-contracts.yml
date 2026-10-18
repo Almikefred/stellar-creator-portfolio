@@ -1,0 +1,112 @@
+name: Deploy Contracts (Testnet)
+
+# Deploys the canonical contracts to testnet and commits the resulting
+# contract IDs / WASM hashes to deployments/testnet.json so the app, docs and
+# mobile client have one stable place to read them. See docs/deployments.md.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/contracts/**'
+      - 'backend/Cargo.toml'
+      - 'backend/Cargo.lock'
+      - 'scripts/deploy.cjs'
+
+concurrency:
+  group: deploy-contracts-testnet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  STELLAR_CLI_VERSION: 28.1.0
+  STELLAR_NETWORK: testnet
+  STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+  STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+
+jobs:
+  deploy:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin stellar
+          stellar --version
+
+      - name: Build contracts
+        run: |
+          cd backend
+          cargo build --release --target wasm32v1-none \
+            -p stellar-bounty-contract \
+            -p stellar-escrow-contract \
+            -p stellar-freelancer-contract \
+            -p stellar-governance-contract
+          mkdir -p ../artifacts
+          for c in bounty escrow freelancer governance; do
+            cp "target/wasm32v1-none/release/stellar_${c}_contract.wasm" "../artifacts/${c}.wasm"
+          done
+
+      - name: Configure deployer
+        env:
+          TESTNET_DEPLOYER_SECRET: ${{ secrets.TESTNET_DEPLOYER_SECRET }}
+        run: |
+          if [ -n "$TESTNET_DEPLOYER_SECRET" ]; then
+            echo "STELLAR_ADMIN_SECRET=$TESTNET_DEPLOYER_SECRET" >> "$GITHUB_ENV"
+          else
+            # No secret configured: use a throwaway Friendbot-funded identity.
+            stellar keys generate ci-deployer --network testnet --fund
+            echo "STELLAR_ADMIN_SECRET=ci-deployer" >> "$GITHUB_ENV"
+          fi
+
+      - name: Deploy contracts
+        env:
+          WASM_DIR: artifacts
+        run: node scripts/deploy.cjs --manifest deployments/testnet.json
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: contracts-testnet-${{ github.sha }}
+          path: |
+            deployments/testnet.json
+            artifacts/*.wasm
+
+      - name: Commit manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployments/testnet.json
+          if git diff --cached --quiet; then
+            echo "Manifest unchanged."
+            exit 0
+          fi
+          git commit -m "chore(deployments): update testnet manifest for ${GITHUB_SHA::7} [skip ci]"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Testnet deployment"
+            echo
+            echo '```json'
+            cat deployments/testnet.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

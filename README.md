@@ -39,6 +39,16 @@ Stellar is a comprehensive ecosystem designed specifically for non-technical tal
 3. **Freelancer Registry** - Profile management, ratings, and verification
 4. **Governance Contract** - Platform fees, parameters, and DAO voting
 
+All contracts live in `backend/contracts/` and build against a single Soroban SDK
+version (`soroban-sdk = "23.5.3"`, pinned in `backend/Cargo.toml`). The legacy
+top-level `contracts/` tree (`amm`, `analytics`, `core`, `vault`) was archived:
+it was never built or deployed, and it pinned older SDKs. To recover it, see git
+history before its removal, e.g. `git show 552a0cf:contracts/amm/src/lib.rs`.
+
+**Deployed addresses:** [`deployments/testnet.json`](./deployments/testnet.json)
+(see [docs/deployments.md](./docs/deployments.md) for the schema and runbook).
+**TypeScript clients:** generated into [`packages/contracts-ts`](./packages/contracts-ts/README.md).
+
 ## Project Structure
 
 ```
@@ -557,10 +567,16 @@ cargo build --release
 # Run tests
 cargo test
 
-# Deploy to Stellar Testnet
-cd contracts/bounty
-stellar contract deploy --network testnet --source account-name
+# Regenerate TypeScript bindings after changing a contract interface
+./scripts/generate-contract-bindings.sh
+
+# Check per-entrypoint CPU/memory cost against the baseline
+cargo test -p contract-benchmarks -- --nocapture
 ```
+
+Testnet deploys run from CI and publish addresses to
+[`deployments/testnet.json`](./deployments/testnet.json); see
+[docs/deployments.md](./docs/deployments.md).
 
 See [backend/README.md](./backend/README.md) for comprehensive backend documentation, deployment guides, and smart contract specifications.
 

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "contracts/benchmarks",
     "contracts/bounty",
     "contracts/core",
     "contracts/escrow",
@@ -18,15 +19,14 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.74.0"
+rust-version = "1.84.0"
 authors = ["Stellar Team"]
 license = "MIT"
 repository = "https://github.com/stellar/stellar-platform"
 
 [workspace.dependencies]
 # Soroban SDK
-soroban-sdk = "21.7.7"
-soroban-spec-tools = "21.5"
+soroban-sdk = "23.5.3"
 
 # Web & HTTP
 actix-web = "4.4"

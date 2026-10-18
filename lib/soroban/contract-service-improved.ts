@@ -24,6 +24,7 @@ import { stellarClient } from "@/services/api/stellar/client";
 import { Signer } from "@/services/api/stellar/types";
 import { getSequenceManager } from "./sequence-manager";
 import { getTransactionQueue } from "./transaction-queue";
+import { encodeContractArgs } from "./contract-clients";
 
 /**
  * Improved contract service with sequence management
@@ -105,7 +106,10 @@ export class ImprovedContractService {
     // Build transaction with provided sequence
     const call = contract.call(
       method,
-      ...args.map((arg) => nativeToScVal(arg)),
+      ...encodeContractArgs(contractId, method, args, {
+        rpcUrl: stellarClient.config.rpcUrl,
+        networkPassphrase,
+      }),
     );
     let tx = new TransactionBuilder(
       new Account(sourcePublicKey, sequence.toString()),
