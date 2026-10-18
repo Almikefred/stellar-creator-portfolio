@@ -32,6 +32,10 @@ pub enum ReleaseCondition {
 }
 
 /// Bounty Error Codes
+///
+/// Codes are part of the contract's public interface: clients and the
+/// indexer map them to messages, so never renumber an existing variant —
+/// only append new ones. See docs/contracts.md for the full table.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -43,6 +47,28 @@ pub enum BountyError {
     MultisigNotConfigured = 4,
     /// Fewer signers authorised than the required minimum (M-of-N not satisfied).
     InsufficientSigners = 5,
+    /// `initialize` / `set_admin` called after an admin was already stored.
+    AlreadyInitialized = 6,
+    /// An admin-gated method was called before `initialize`.
+    AdminNotSet = 7,
+    /// Caller is not the stored contract admin.
+    Unauthorized = 8,
+    /// `create_and_fund_bounty` called before `set_escrow_contract`.
+    EscrowContractNotSet = 9,
+    BountyNotFound = 10,
+    ApplicationNotFound = 11,
+    /// The application belongs to a different bounty.
+    ApplicationMismatch = 12,
+    /// The bounty is not in the status this transition requires.
+    InvalidStatus = 13,
+    /// Only the selected freelancer may submit completion.
+    NotSelectedFreelancer = 14,
+    /// `required` is 0 or exceeds the signer count, or threshold <= 0.
+    InvalidMultisigConfig = 15,
+    /// An approver is not in the configured multi-sig signer set.
+    ApproverNotSigner = 16,
+    /// The same approver appears more than once.
+    DuplicateApprover = 17,
 }
 
 /// DataKey for typed storage lookups
@@ -114,6 +140,34 @@ pub struct BountyApplication {
     pub created_at: u64,
 }
 
+fn bounty_key(env: &Env, bounty_id: u64) -> (Symbol, u64) {
+    (Symbol::new(env, "bounty"), bounty_id)
+}
+
+fn load_bounty(env: &Env, bounty_id: u64) -> Result<Bounty, BountyError> {
+    env.storage()
+        .persistent()
+        .get::<(Symbol, u64), Bounty>(&bounty_key(env, bounty_id))
+        .ok_or(BountyError::BountyNotFound)
+}
+
+/// Fails with `AdminNotSet` / `Unauthorized` unless `admin` is the stored contract admin.
+fn require_admin(env: &Env, admin: &Address) -> Result<(), BountyError> {
+    let stored_admin: Address = env
+        .storage()
+        .persistent()
+        .get::<Symbol, Address>(&Symbol::new(env, "bounty_admin"))
+        .ok_or(BountyError::AdminNotSet)?;
+    if *admin != stored_admin {
+        return Err(BountyError::Unauthorized);
+    }
+    Ok(())
+}
+
+fn ensure(cond: bool, err: BountyError) -> Result<(), BountyError> {
+    if cond { Ok(()) } else { Err(err) }
+}
+
 #[contract]
 pub struct BountyContract;
 
@@ -121,29 +175,24 @@ pub struct BountyContract;
 impl BountyContract {
     /// Set the contract admin. Must be called once before any admin-gated
     /// method (`set_escrow_contract`, `set_multisig_signers`, ...).
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), BountyError> {
         admin.require_auth();
         let stored_admin_key = Symbol::new(&env, "bounty_admin");
-        assert!(
+        ensure(
             !env.storage().persistent().has(&stored_admin_key),
-            "Already initialized"
-        );
+            BountyError::AlreadyInitialized,
+        )?;
         env.storage().persistent().set(&stored_admin_key, &admin);
+        Ok(())
     }
 
-    pub fn set_escrow_contract(env: Env, admin: Address, escrow: Address) -> bool {
+    pub fn set_escrow_contract(env: Env, admin: Address, escrow: Address) -> Result<bool, BountyError> {
         admin.require_auth();
-        let stored_admin_key = Symbol::new(&env, "bounty_admin");
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get::<Symbol, Address>(&stored_admin_key)
-            .expect("Contract admin not set");
-        assert_eq!(admin, stored_admin, "unauthorized");
+        require_admin(&env, &admin)?;
         env.storage()
             .persistent()
             .set(&DataKey::EscrowContract, &escrow);
-        true
+        Ok(true)
     }
 
     // ── Multi-sig governance (issue #740) ────────────────────────────────────
@@ -159,20 +208,14 @@ impl BountyContract {
         admin: Address,
         signers: Vec<Address>,
         required: u32,
-    ) -> bool {
+    ) -> Result<bool, BountyError> {
         admin.require_auth();
-        let stored_admin_key = Symbol::new(&env, "bounty_admin");
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get::<Symbol, Address>(&stored_admin_key)
-            .expect("Contract admin not set");
-        assert_eq!(admin, stored_admin, "unauthorized");
-        assert!(required > 0, "required must be > 0");
-        assert!(
-            required <= signers.len() as u32,
-            "required must be <= number of signers"
-        );
+        require_admin(&env, &admin)?;
+        // required must be in 1..=signers.len()
+        ensure(
+            required > 0 && required <= signers.len(),
+            BountyError::InvalidMultisigConfig,
+        )?;
 
         env.storage()
             .persistent()
@@ -183,30 +226,29 @@ impl BountyContract {
 
         env.events().publish(
             (symbol_short!("multisig"), symbol_short!("updated")),
-            (required, signers.len() as u32),
+            (required, signers.len()),
         );
 
-        true
+        Ok(true)
     }
 
     /// Update the budget threshold above which multi-sig is enforced.
     /// Only the contract admin may call this.
-    pub fn set_multisig_threshold(env: Env, admin: Address, threshold: i128) -> bool {
+    pub fn set_multisig_threshold(env: Env, admin: Address, threshold: i128) -> Result<bool, BountyError> {
         admin.require_auth();
-        let stored_admin_key = Symbol::new(&env, "bounty_admin");
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get::<Symbol, Address>(&stored_admin_key)
-            .expect("Contract admin not set");
-        assert_eq!(admin, stored_admin, "unauthorized");
-        assert!(threshold > 0, "threshold must be > 0");
+        require_admin(&env, &admin)?;
+        ensure(threshold > 0, BountyError::InvalidMultisigConfig)?;
 
         env.storage()
             .persistent()
             .set(&DataKey::MultisigThreshold, &threshold);
 
-        true
+        env.events().publish(
+            (symbol_short!("multisig"), symbol_short!("threshold")),
+            threshold,
+        );
+
+        Ok(true)
     }
 
     /// Return the configured multi-sig threshold (or the compile-time default).
@@ -217,11 +259,11 @@ impl BountyContract {
             .unwrap_or(MULTISIG_THRESHOLD)
     }
 
-    fn get_escrow_contract(env: &Env) -> Address {
+    fn get_escrow_contract(env: &Env) -> Result<Address, BountyError> {
         env.storage()
             .persistent()
             .get::<DataKey, Address>(&DataKey::EscrowContract)
-            .expect("Escrow contract not set")
+            .ok_or(BountyError::EscrowContractNotSet)
     }
 
     pub fn create_bounty(
@@ -258,8 +300,7 @@ impl BountyContract {
             escrow_id: 0,
         };
 
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
         env.storage()
             .persistent()
             .set(&bounty_counter_key, &counter);
@@ -280,8 +321,10 @@ impl BountyContract {
         budget: i128,
         token: Address,
         deadline: u64,
-    ) -> u64 {
+    ) -> Result<u64, BountyError> {
         creator.require_auth();
+
+        let escrow_contract = Self::get_escrow_contract(&env)?;
 
         let bounty_id = Self::create_bounty(
             env.clone(),
@@ -292,7 +335,6 @@ impl BountyContract {
             deadline,
         );
 
-        let escrow_contract = Self::get_escrow_contract(&env);
         let escrow_client = EscrowContractClient::new(&env, &escrow_contract);
 
         let escrow_id = escrow_client.deposit(
@@ -304,24 +346,20 @@ impl BountyContract {
             &ReleaseCondition::OnCompletion,
         );
 
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+        let mut bounty = load_bounty(&env, bounty_id)?;
         bounty.escrow_id = escrow_id;
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
 
-        bounty_id
+        env.events().publish(
+            (symbol_short!("bounty"), symbol_short!("funded")),
+            (bounty_id, escrow_id),
+        );
+
+        Ok(bounty_id)
     }
 
-    pub fn get_bounty(env: Env, bounty_id: u64) -> Bounty {
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        env.storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found")
+    pub fn get_bounty(env: Env, bounty_id: u64) -> Result<Bounty, BountyError> {
+        load_bounty(&env, bounty_id)
     }
 
     pub fn apply_for_bounty(
@@ -369,74 +407,69 @@ impl BountyContract {
         application_id
     }
 
-    pub fn get_application(env: Env, application_id: u64) -> BountyApplication {
+    pub fn get_application(env: Env, application_id: u64) -> Result<BountyApplication, BountyError> {
         let app_key = (Symbol::new(&env, "application"), application_id);
         env.storage()
             .persistent()
             .get::<(Symbol, u64), BountyApplication>(&app_key)
-            .expect("Application not found")
+            .ok_or(BountyError::ApplicationNotFound)
     }
 
+    /// Assign the bounty to an applicant. Emits `("bounty", "selected")` —
+    /// this is the "assigned" transition in docs/contracts.md.
     pub fn select_freelancer(
         env: Env,
         bounty_id: u64,
         application_id: u64,
-    ) -> bool {
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+    ) -> Result<bool, BountyError> {
+        let mut bounty = load_bounty(&env, bounty_id)?;
 
         bounty.creator.require_auth();
 
-        let application = Self::get_application(env.clone(), application_id);
-        assert_eq!(application.bounty_id, bounty_id, "Application does not match bounty");
+        let application = Self::get_application(env.clone(), application_id)?;
+        ensure(application.bounty_id == bounty_id, BountyError::ApplicationMismatch)?;
 
         let selected = application.freelancer;
         bounty.selected_freelancer = Some(selected.clone());
         bounty.status = BountyStatus::InProgress;
 
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("selected")),
             (bounty_id, application_id, selected),
         );
 
-        true
+        Ok(true)
     }
 
     /// Called by the selected freelancer to signal work is done.
     /// Transitions the bounty from InProgress → PendingCompletion. (#160)
     /// The creator must then call complete_bounty to approve.
-    pub fn submit_completion(env: Env, bounty_id: u64, freelancer: Address) -> bool {
+    pub fn submit_completion(env: Env, bounty_id: u64, freelancer: Address) -> Result<bool, BountyError> {
         freelancer.require_auth();
 
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+        let mut bounty = load_bounty(&env, bounty_id)?;
 
-        assert!(
-            bounty.status == BountyStatus::InProgress,
-            "Bounty not in progress"
-        );
-        assert!(
+        ensure(bounty.status == BountyStatus::InProgress, BountyError::InvalidStatus)?;
+        ensure(
             bounty.selected_freelancer == Some(freelancer.clone()),
-            "Only the selected freelancer can submit completion"
-        );
+            BountyError::NotSelectedFreelancer,
+        )?;
 
         bounty.status = BountyStatus::PendingCompletion;
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
 
-        true
+        env.events().publish(
+            (symbol_short!("bounty"), symbol_short!("submitted")),
+            (bounty_id, freelancer),
+        );
+
+        Ok(true)
     }
 
-    /// Approve completion and release payment.
+    /// Approve completion and release payment. Emits `("bounty", "completed")` —
+    /// this is the "approved" transition in docs/contracts.md.
     ///
     /// `approvers` names the multi-sig signers authorising this call. It is
     /// ignored for bounties below the multi-sig threshold — pass an empty
@@ -446,22 +479,17 @@ impl BountyContract {
     ///
     /// Any `required`-sized subset satisfies the policy; the signers no longer
     /// have to be the first `required` entries in the stored order (#1113).
-    pub fn complete_bounty(env: Env, bounty_id: u64, approvers: Vec<Address>) -> bool {
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+    pub fn complete_bounty(env: Env, bounty_id: u64, approvers: Vec<Address>) -> Result<bool, BountyError> {
+        let mut bounty = load_bounty(&env, bounty_id)?;
 
         bounty.creator.require_auth();
         // #160: Creator can only approve completion after the freelancer has
         // signalled work is done via submit_completion (PendingCompletion).
         // Direct completion from InProgress is no longer allowed.
-        assert!(
+        ensure(
             bounty.status == BountyStatus::PendingCompletion,
-            "Freelancer must submit completion before creator can approve"
-        );
+            BountyError::InvalidStatus,
+        )?;
 
         // #740: Bounties above the multi-sig threshold require M-of-N signer
         // authorisation before the payment is released.
@@ -471,7 +499,7 @@ impl BountyContract {
                 .storage()
                 .persistent()
                 .get::<DataKey, Vec<Address>>(&DataKey::MultisigSigners)
-                .expect("Multi-sig signer set not configured for high-value bounty");
+                .ok_or(BountyError::MultisigNotConfigured)?;
 
             let required: u32 = env
                 .storage()
@@ -491,38 +519,27 @@ impl BountyContract {
             //
             // Naming the approvers up front means every require_auth() below is
             // expected to succeed, which is the only way to use it correctly.
-            assert!(
-                approvers.len() as u32 >= required,
-                "Insufficient multi-sig authorisations for high-value bounty"
-            );
+            ensure(approvers.len() >= required, BountyError::InsufficientSigners)?;
 
             let mut auth_count: u32 = 0;
             for (i, approver) in approvers.iter().enumerate() {
                 // Every approver must belong to the configured signer set,
                 // otherwise any address could pad the quorum with its own
                 // signature.
-                assert!(
-                    signers.contains(&approver),
-                    "Approver is not a configured multi-sig signer"
-                );
+                ensure(signers.contains(&approver), BountyError::ApproverNotSigner)?;
 
                 // Without this, [signer_a, signer_a, signer_a] would satisfy a
                 // 3-of-5 policy with one key — turning M-of-N into 1-of-N.
-                for j in (i + 1)..(approvers.len() as usize) {
-                    assert!(
-                        approver != approvers.get(j as u32).unwrap(),
-                        "Duplicate approver in multi-sig set"
-                    );
-                }
+                ensure(
+                    !approvers.iter().skip(i + 1).any(|other| other == approver),
+                    BountyError::DuplicateApprover,
+                )?;
 
                 approver.require_auth();
                 auth_count += 1;
             }
 
-            assert!(
-                auth_count >= required,
-                "Insufficient multi-sig authorisations for high-value bounty"
-            );
+            ensure(auth_count >= required, BountyError::InsufficientSigners)?;
 
             env.events().publish(
                 (symbol_short!("bounty"), symbol_short!("multisig")),
@@ -534,37 +551,32 @@ impl BountyContract {
         let completed_at = env.ledger().timestamp();
         bounty.completed_at = Some(completed_at);
 
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("completed")),
             (bounty_id, completed_at),
         );
 
-        true
+        Ok(true)
     }
 
-    pub fn cancel_bounty(env: Env, bounty_id: u64) -> bool {
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+    pub fn cancel_bounty(env: Env, bounty_id: u64) -> Result<bool, BountyError> {
+        let mut bounty = load_bounty(&env, bounty_id)?;
 
         bounty.creator.require_auth();
-        assert!(bounty.status == BountyStatus::Open, "Only open bounties can be cancelled");
+        ensure(bounty.status == BountyStatus::Open, BountyError::InvalidStatus)?;
 
         bounty.status = BountyStatus::Cancelled;
 
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("cancelled")),
             (bounty_id,),
         );
 
-        true
+        Ok(true)
     }
 
     pub fn get_bounties_count(env: Env) -> u64 {
@@ -581,8 +593,7 @@ impl BountyContract {
         let mut result = Vec::new(&env);
         let counter = Self::get_bounties_count(env.clone());
         for i in 1..=counter {
-            let key = (Symbol::new(&env, "bounty"), i);
-            if let Some(bounty) = env.storage().persistent().get::<(Symbol, u64), Bounty>(&key) {
+            if let Ok(bounty) = load_bounty(&env, i) {
                 if bounty.status == status {
                     result.push_back(bounty);
                 }
@@ -599,8 +610,7 @@ impl BountyContract {
         let start = offset + 1; // storage keys are 1-based
         let end = (start + limit).min(counter + 1);
         for i in start..end {
-            let key = (Symbol::new(&env, "bounty"), i);
-            if let Some(bounty) = env.storage().persistent().get::<(Symbol, u64), Bounty>(&key) {
+            if let Ok(bounty) = load_bounty(&env, i) {
                 result.push_back(bounty);
             }
         }
@@ -632,37 +642,29 @@ impl BountyContract {
         applications
     }
 
-    pub fn link_escrow(env: Env, bounty_id: u64, escrow_id: u64) -> bool {
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+    pub fn link_escrow(env: Env, bounty_id: u64, escrow_id: u64) -> Result<bool, BountyError> {
+        let mut bounty = load_bounty(&env, bounty_id)?;
         bounty.creator.require_auth();
         bounty.escrow_id = escrow_id;
-        env.storage().persistent().set(&bounty_key, &bounty);
-        true
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
+
+        env.events().publish(
+            (symbol_short!("bounty"), symbol_short!("funded")),
+            (bounty_id, escrow_id),
+        );
+
+        Ok(true)
     }
 
-    pub fn check_and_expire_bounty(env: Env, bounty_id: u64, escrow_contract: Address) -> bool {
-        let bounty_key = (Symbol::new(&env, "bounty"), bounty_id);
-        let mut bounty = env
-            .storage()
-            .persistent()
-            .get::<(Symbol, u64), Bounty>(&bounty_key)
-            .expect("Bounty not found");
+    pub fn check_and_expire_bounty(env: Env, bounty_id: u64, escrow_contract: Address) -> Result<bool, BountyError> {
+        let mut bounty = load_bounty(&env, bounty_id)?;
 
-        if env.ledger().timestamp() <= bounty.deadline {
-            panic!("Deadline not passed");
-        }
-        if bounty.status != BountyStatus::Open {
-            panic!("Already processed");
-        }
+        ensure(env.ledger().timestamp() > bounty.deadline, BountyError::DeadlineNotPassed)?;
+        ensure(bounty.status == BountyStatus::Open, BountyError::AlreadyProcessed)?;
 
         // Cancel bounty
         bounty.status = BountyStatus::Cancelled;
-        env.storage().persistent().set(&bounty_key, &bounty);
+        env.storage().persistent().set(&bounty_key(&env, bounty_id), &bounty);
 
         // Trigger escrow refund
         let escrow_client = EscrowContractClient::new(&env, &escrow_contract);
@@ -674,7 +676,7 @@ impl BountyContract {
             (bounty_id,),
         );
 
-        true
+        Ok(true)
     }
 
     /// Estimate the total fee for creating a bounty with the given budget.
@@ -692,17 +694,9 @@ impl BountyContract {
 
     /// Upgrade the contract WASM. Only the governance multisig (contract admin)
     /// may call this. Emits an `upgraded` event with the new wasm hash.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), BountyError> {
         admin.require_auth();
-        let admin_key = DataKey::EscrowContract; // reuse admin storage slot via escrow contract key?
-        // Bounty contract uses a standalone admin key
-        let stored_admin_key = Symbol::new(&env, "bounty_admin");
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get::<Symbol, Address>(&stored_admin_key)
-            .expect("Contract admin not set");
-        assert_eq!(admin, stored_admin, "unauthorized");
+        require_admin(&env, &admin)?;
 
         env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
 
@@ -710,20 +704,22 @@ impl BountyContract {
             (symbol_short!("contract"), symbol_short!("upgraded")),
             new_wasm_hash,
         );
+        Ok(())
     }
 
     /// Set the bounty contract admin (governance multisig). Can only be called once.
-    pub fn set_admin(env: Env, admin: Address) {
+    pub fn set_admin(env: Env, admin: Address) -> Result<(), BountyError> {
         admin.require_auth();
         let stored_admin_key = Symbol::new(&env, "bounty_admin");
-        assert!(
+        ensure(
             env.storage()
                 .persistent()
                 .get::<Symbol, Address>(&stored_admin_key)
                 .is_none(),
-            "Admin already set"
-        );
+            BountyError::AlreadyInitialized,
+        )?;
         env.storage().persistent().set(&stored_admin_key, &admin);
+        Ok(())
     }
 }
 

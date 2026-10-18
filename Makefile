@@ -58,6 +58,7 @@ check-backend: lint-be test-be
 
 check-contracts:
 	@echo "Checking smart contracts..."
+	./scripts/check-contract-panics.sh
 	cd backend && cargo test --all-features
 
 check-frontend: lint-fe

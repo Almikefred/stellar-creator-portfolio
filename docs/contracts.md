@@ -156,3 +156,153 @@ than calling `upgrade`, and isn't what CI's Mainnet pipeline does on a normal
 release (a normal release only redeploys code behind IDs that didn't already
 exist; it doesn't call `upgrade` on existing ones — that's a deliberate,
 separate, manual step per the procedure above).
+
+## Error codes
+
+Contract entrypoints return typed `#[contracterror]` enums instead of
+panicking (#1562), so a failed call surfaces to clients as
+`Error(Contract, #N)` with a stable code rather than an opaque host trap.
+In Rust tests and cross-contract calls use the generated `try_*` client
+methods to get the `Result` back. Codes are append-only: never renumber an
+existing variant. `scripts/check-contract-panics.sh` (run in CI and by
+`make check-contracts`) fails if `.unwrap()` or `panic!` creeps back into
+non-test contract code.
+
+**Migration for existing clients:** success return values are unchanged.
+Calls that used to fail with a panic message (e.g. `"Escrow not found"`) now
+fail with the matching code below, so any client matching on panic strings
+should match on the code instead.
+
+### Escrow (`EscrowError`)
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 1 | `EscrowNotFound` | No escrow with that id |
+| 2 | `AdminNotSet` | Admin-gated call before `set_admin` |
+| 3 | `AdminAlreadySet` | `set_admin` called twice |
+| 4 | `Unauthorized` | Caller is not the payer/payee/admin this call requires |
+| 5 | `EscrowNotActive` | Escrow is not `Active` |
+| 6 | `ReleaseConditionNotMet` | Timelock has not elapsed |
+| 7 | `OraclePriceStale` | Oracle price older than the staleness threshold |
+| 8 | `InvalidAmount` | Deposit or milestone amount ≤ 0 |
+| 9 | `NoEscrowForBounty` | `refund_expired_bounty` for a bounty with no escrow |
+| 10 | `EscrowNotDisputed` | Escrow is not `Disputed` |
+| 11 | `DisputeNotExpired` | Dispute window has not elapsed |
+| 12 | `DisputeExpiryMissing` | No expiry recorded for the dispute |
+| 13 | `InvalidBps` | A basis-point value is > 10 000 |
+| 14 | `MilestoneNotFound` | No milestone at that index |
+| 15 | `MilestoneAlreadyExists` | Milestone index already used |
+| 16 | `MilestoneAlreadyReleased` | Milestone already paid out |
+| 17 | `MilestoneExceedsEscrow` | Milestones would exceed the escrow amount |
+| 18 | `UnsupportedOperation` | `submit_transaction` with `deposit` or an unknown op |
+| 19 | `YieldPaused` | Yield farming is paused |
+| 20 | `YieldNotConfigured` | `configure_yield` was never called |
+| 21 | `YieldAccrualNotFound` | No yield accrued for this escrow |
+| 22 | `NoYieldToWithdraw` | Accrued yield is 0 |
+| 23 | `InsufficientLiquidity` | Withdrawal would breach the liquidity floor |
+| 24 | `InvalidFeeConfig` | Fee bps outside 0–1 000 or negative cap |
+| 25 | `InvalidStaleness` | Staleness outside 60–86 400 s |
+
+### Bounty (`BountyError`)
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 1 | `DeadlineNotPassed` | `check_and_expire_bounty` before the deadline |
+| 2 | `AlreadyProcessed` | Bounty is no longer `Open` |
+| 3 | `InsufficientBalance` | Reserved |
+| 4 | `MultisigNotConfigured` | High-value bounty but no signer set |
+| 5 | `InsufficientSigners` | Fewer approvers than `required` |
+| 6 | `AlreadyInitialized` | `initialize` / `set_admin` called twice |
+| 7 | `AdminNotSet` | Admin-gated call before `initialize` |
+| 8 | `Unauthorized` | Caller is not the admin |
+| 9 | `EscrowContractNotSet` | `create_and_fund_bounty` before `set_escrow_contract` |
+| 10 | `BountyNotFound` | No bounty with that id |
+| 11 | `ApplicationNotFound` | No application with that id |
+| 12 | `ApplicationMismatch` | Application belongs to another bounty |
+| 13 | `InvalidStatus` | Bounty is not in the status the transition requires |
+| 14 | `NotSelectedFreelancer` | Only the selected freelancer can submit |
+| 15 | `InvalidMultisigConfig` | `required` is 0 or > signers, or threshold ≤ 0 |
+| 16 | `ApproverNotSigner` | Approver is not a configured signer |
+| 17 | `DuplicateApprover` | Same approver listed twice |
+
+### Freelancer (`FreelancerError`)
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 1 | `AlreadyInitialized` | `initialize` called twice |
+| 2 | `NotInitialized` | Owner-gated call before `initialize` |
+| 3 | `NotRegistered` | No profile for that address |
+| 4 | `InvalidRating` | Rating > 500 |
+| 5 | `IdentityNotFound` | No identity metadata for that address |
+| 6 | `Unauthorized` | `upgrade` caller is not the owner |
+
+### Referral (`ReferralError`)
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 1 | `AlreadyInitialized` | `initialize` called twice |
+| 2 | `NotInitialized` | Call before `initialize` |
+| 3 | `ReferralAlreadyRegistered` | Referred address already has a referrer |
+| 4 | `MonthlyLimitReached` | Referrer hit 50 referrals this month |
+| 5 | `ReferralNotFound` | No referral for that address |
+| 6 | `NoUnclaimedRewards` | Nothing to claim |
+
+### Stellar Insights (`InsightsError`)
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 1 | `NotInitialized` | Call before `initialize` |
+| 2 | `AlreadyInitialized` | `initialize` called twice |
+| 3 | `Unauthorized` | Caller is not the admin |
+| 4 | `ReviewNotFound` | No review with that id |
+| 5 | `ReviewAlreadyChallenged` | Review is not `Active` |
+| 6 | `ChallengeNotFound` | No challenge with that id |
+| 7 | `ChallengeNotPending` | Challenge already resolved |
+| 8 | `InvalidRating` | Rating outside 1–5 |
+| 9 | `BonusExceedsLimit` | Bonus > `MAX_BONUS_PER_COMPLETION` |
+| 10 | `PlatformTokenNotSet` | Platform token missing |
+| 11 | `ReputationNotFound` | No reputation for that creator |
+| 12 | `InvalidScore` | Negative score or bonus |
+| 13 | `InvalidDecayRate` | Decay rate outside 1–10 000 |
+
+## Events
+
+Every state transition in the bounty and freelancer contracts publishes an
+event (#1563), so the indexer and notifications can follow on-chain state
+without re-reading storage. Topics are `(contract, action)` pairs of
+`symbol_short!` symbols; data is the tuple shown.
+
+### Bounty
+
+| Transition | Topics | Data |
+|---|---|---|
+| Created | `("bounty", "created")` | `(bounty_id: u64, creator: Address, budget: i128, deadline: u64)` |
+| Funded / escrow linked | `("bounty", "funded")` | `(bounty_id: u64, escrow_id: u64)` |
+| Applied | `("bounty", "applied")` | `(bounty_id: u64, application_id: u64, freelancer: Address)` |
+| Assigned | `("bounty", "selected")` | `(bounty_id: u64, application_id: u64, freelancer: Address)` |
+| Submitted | `("bounty", "submitted")` | `(bounty_id: u64, freelancer: Address)` |
+| Multi-sig approval | `("bounty", "multisig")` | `(bounty_id: u64, auth_count: u32, required: u32)` |
+| Approved | `("bounty", "completed")` | `(bounty_id: u64, completed_at: u64)` |
+| Cancelled | `("bounty", "cancelled")` | `(bounty_id: u64,)` |
+| Expired (auto-cancel + refund) | `("bounty", "expired")` | `(bounty_id: u64,)` |
+| Signer set changed | `("multisig", "updated")` | `(required: u32, signer_count: u32)` |
+| Threshold changed | `("multisig", "threshold")` | `threshold: i128` |
+| WASM upgraded | `("contract", "upgraded")` | `new_wasm_hash: BytesN<32>` |
+
+"Assigned" and "approved" keep their existing `selected` / `completed`
+topic names so current consumers don't break.
+
+### Freelancer
+
+| Transition | Topics | Data |
+|---|---|---|
+| Registered | `("freelncr", "register")` | `(freelancer: Address, registered_at: u64)` |
+| Rated | `("freelncr", "rated")` | `(freelancer: Address, new_rating: u32, avg_rating: u32, rating_count: u32)` |
+| Project completed | `("freelncr", "completed")` | `(freelancer: Address, completed_projects: u32)` |
+| Earnings credited | `("freelncr", "earnings")` | `(freelancer: Address, amount: i128, total_earnings: i128)` |
+| Verified | `("freelncr", "verified")` | `(freelancer: Address,)` |
+| Identity metadata set | `("freelncr", "identity")` | `(user: Address, last_updated: u64)` |
+| Public key mapped | `("freelncr", "pk_mapped")` | `(public_key: String, user: Address)` |
+| WASM upgraded | `("contract", "upgraded")` | `new_wasm_hash: BytesN<32>` |
+
+`symbol_short!` is limited to 9 characters, hence `freelncr`.
