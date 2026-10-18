@@ -1,6 +1,10 @@
 import {
-  graphql,
+  execute,
+  GraphQLError,
   isObjectType,
+  parse,
+  validate,
+  type DocumentNode,
   type GraphQLFieldResolver,
   type GraphQLSchema,
 } from 'graphql';
@@ -9,6 +13,7 @@ import { typeDefs } from '@/server/graphql/schema';
 import { resolvers } from '@/server/graphql/resolvers';
 import { createGraphQLContext } from '@/server/graphql/context';
 import { checkRateLimit, RateLimitError } from '@/server/graphql/rate-limit';
+import { checkQueryLimits, getValidationRules } from '@/server/graphql/security';
 
 let schema: GraphQLSchema;
 
@@ -42,6 +47,13 @@ function getSchema() {
   return schema;
 }
 
+function badRequest(message: string) {
+  return NextResponse.json(
+    { errors: [{ message, extensions: { code: 'BAD_REQUEST' } }] },
+    { status: 400 }
+  );
+}
+
 async function handleGraphQLRequest(req: NextRequest) {
   if (req.method === 'OPTIONS') {
     return new NextResponse(null, { status: 204 });
@@ -64,14 +76,50 @@ async function handleGraphQLRequest(req: NextRequest) {
       throw error;
     }
 
-    const { query, variables, operationName } =
+    const params =
       req.method === 'GET'
         ? Object.fromEntries(new URL(req.url).searchParams)
         : await req.json();
+    const { query, operationName } = params ?? {};
+    let variables = params?.variables;
 
-    const result = await graphql({
-      schema: getSchema(),
-      source: query,
+    if (typeof query !== 'string' || query.trim() === '') {
+      return badRequest('Request must include a non-empty "query" string.');
+    }
+    if (typeof variables === 'string') {
+      try {
+        variables = JSON.parse(variables);
+      } catch {
+        return badRequest('"variables" must be valid JSON.');
+      }
+    }
+    if (variables != null && (typeof variables !== 'object' || Array.isArray(variables))) {
+      return badRequest('"variables" must be an object.');
+    }
+
+    let document: DocumentNode;
+    try {
+      document = parse(query);
+    } catch (error) {
+      return NextResponse.json({ errors: [error as GraphQLError] }, { status: 400 });
+    }
+
+    const currentSchema = getSchema();
+    // Introspection is rejected here in production (#1561).
+    const validationErrors = validate(currentSchema, document, getValidationRules());
+    if (validationErrors.length > 0) {
+      return NextResponse.json({ errors: validationErrors }, { status: 400 });
+    }
+
+    // Depth and cost limits are enforced before any resolver runs (#1560).
+    const limitErrors = checkQueryLimits(currentSchema, document, operationName, variables ?? {});
+    if (limitErrors.length > 0) {
+      return NextResponse.json({ errors: limitErrors }, { status: 400 });
+    }
+
+    const result = await execute({
+      schema: currentSchema,
+      document,
       variableValues: variables,
       operationName,
       contextValue: ctx,

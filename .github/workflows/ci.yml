@@ -146,6 +146,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
+      - name: No unwrap/panic in contract code
+        run: ./scripts/check-contract-panics.sh
       - name: Clippy
         run: cd backend && cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
