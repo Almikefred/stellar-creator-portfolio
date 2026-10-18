@@ -227,6 +227,86 @@ impl OracleContract {
 
     // ── Internal ─────────────────────────────────────────────────────────────
 
+    // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
+    //
+    // Replaces the old instant `upgrade` entrypoint. Shared logic lives in
+    // `stellar-upgradeable`; see docs/contracts.md (Upgrading a live contract).
+
+    /// Propose a WASM upgrade. Admin-only. Returns the ledger timestamp after
+    /// which `execute_upgrade` may be called (now + 48h). Emits
+    /// `(upgrade, proposed)`.
+    pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> u64 {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Contract not initialized; call initialize first");
+        stellar_upgradeable::propose_upgrade(&env, &admin, &stored_admin, new_wasm_hash)
+    }
+
+    /// Apply the pending upgrade once its timelock has elapsed. Admin-only.
+    /// Emits `(contract, upgraded)`.
+    pub fn execute_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Contract not initialized; call initialize first");
+        stellar_upgradeable::execute_upgrade(&env, &admin, &stored_admin);
+    }
+
+    /// Withdraw the pending upgrade. Admin-only. Emits `(upgrade, cancelled)`.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Contract not initialized; call initialize first");
+        stellar_upgradeable::cancel_upgrade(&env, &admin, &stored_admin);
+    }
+
+    /// The upgrade currently waiting out its timelock, if any.
+    pub fn get_pending_upgrade(env: Env) -> Option<stellar_upgradeable::PendingUpgrade> {
+        stellar_upgradeable::pending_upgrade(&env)
+    }
+
+    /// Nominate a new admin (step 1 of 2). Admin-only. Emits `(admin, proposed)`.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Contract not initialized; call initialize first");
+        stellar_upgradeable::propose_admin(&env, &admin, &stored_admin, &new_admin);
+    }
+
+    /// Accept a nomination (step 2 of 2). Must be signed by the nominee.
+    /// Emits `(admin, accepted)`.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Contract not initialized; call initialize first");
+        let accepted = stellar_upgradeable::accept_admin(&env, &new_admin, &stored_admin);
+        <class 'set'>
+    }
+
+    /// Withdraw a pending admin nomination. Admin-only. Emits `(admin, cancelled)`.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Contract not initialized; call initialize first");
+        stellar_upgradeable::cancel_admin_transfer(&env, &admin, &stored_admin);
+    }
+
+    /// The nominated-but-not-yet-accepted admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        stellar_upgradeable::pending_admin(&env)
+    }
+
     /// Assert that `caller` is the stored administrator.
     ///
     /// Panics when the contract has not been initialized, rather than treating

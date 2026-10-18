@@ -4,6 +4,11 @@
 // so it is kept as-is for the SDK upgrade and tracked as a separate change.
 #![allow(deprecated)]
 
+//! On-chain identity attestations: social-domain proofs, KYC levels and
+//! verification tiers. Semantics of "verified", who may issue each
+//! attestation, expiry and revocation are specified in
+//! `docs/identity-verification.md` (Issue #1567).
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror, symbol_short, Address, Bytes, BytesN, Env,
 };
@@ -264,8 +269,37 @@ impl IdentityContract {
         true
     }
 
-    /// Attest a creator's verification tier on-chain.
-    /// Only the platform oracle (attester) may call this.
+    /// Revoke a user's KYC attestation. Admin-only.
+    ///
+    /// Removes the attestation outright, so `check_kyc` returns `false` for
+    /// every level and `get_kyc_attestation` returns `None` — a revoked user
+    /// reads exactly like one who was never verified. A fresh `attest_kyc` /
+    /// `verify_kyc` re-verifies them. Emits `(kyc, revoked)` → `(user, level)`
+    /// with the level that was revoked.
+    pub fn revoke_kyc(env: Env, admin: Address, user: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).expect("Not initialized");
+        assert_eq!(admin, stored_admin, "Only admin can revoke KYC");
+
+        let key = DataKey::KycAttestation(user.clone());
+        let attestation: KycAttestation = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("KYC attestation not found");
+        env.storage().persistent().remove(&key);
+
+        env.events().publish(
+            (symbol_short!("kyc"), symbol_short!("revoked")),
+            (user, attestation.level),
+        );
+    }
+
+    /// Attest a creator's verification tier on-chain. Admin-only.
+    ///
+    /// Previously any address could call this for any owner (the attester
+    /// only had to sign for itself), so trust badges could be self-issued.
+    /// The attester must now be the stored platform admin.
     pub fn set_tier(
         env: Env,
         attester: Address,
@@ -273,6 +307,8 @@ impl IdentityContract {
         tier: VerificationTier,
     ) -> bool {
         attester.require_auth();
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).expect("Not initialized");
+        assert_eq!(attester, stored_admin, "Only admin can set tier");
 
         let attestation = TierAttestation {
             owner: owner.clone(),
@@ -293,8 +329,30 @@ impl IdentityContract {
         true
     }
 
+    /// Revoke a creator's tier attestation. Admin-only. Afterwards `get_tier`
+    /// returns `VerificationTier::None`. Emits `(identity, tier_rev)` →
+    /// `(owner, revoked_tier)`.
+    pub fn revoke_tier(env: Env, admin: Address, owner: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).expect("Not initialized");
+        assert_eq!(admin, stored_admin, "Only admin can revoke tier");
+
+        let key = DataKey::Tier(owner.clone());
+        let attestation: TierAttestation = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("Tier not set");
+        env.storage().persistent().remove(&key);
+
+        env.events().publish(
+            (symbol_short!("identity"), symbol_short!("tier_rev")),
+            (owner, attestation.tier),
+        );
+    }
+
     /// Retrieve the tier attestation for a creator.
-    /// Returns None variant attestation if not yet set.
+    /// Returns None variant attestation if not yet set or revoked.
     pub fn get_tier(env: Env, owner: Address) -> VerificationTier {
         env.storage()
             .persistent()
@@ -303,25 +361,84 @@ impl IdentityContract {
             .unwrap_or(VerificationTier::None)
     }
 
-    // ── Issue #732: Contract upgrade mechanism ────────────────────────────────
+    // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
+    //
+    // Replaces the old instant `upgrade` entrypoint. Shared logic lives in
+    // `stellar-upgradeable`; see docs/contracts.md (Upgrading a live contract).
 
-    /// Upgrade the contract WASM. Only the governance multisig (admin) may call this.
-    /// Emits an `upgraded` event with the new wasm hash.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
-        admin.require_auth();
+    /// Propose a WASM upgrade. Admin-only. Returns the ledger timestamp after
+    /// which `execute_upgrade` may be called (now + 48h). Emits
+    /// `(upgrade, proposed)`.
+    pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> u64 {
         let stored_admin: Address = env
             .storage()
             .persistent()
-            .get(&DataKey::Admin)
-            .expect("Contract not initialized");
-        assert_eq!(admin, stored_admin, "unauthorized");
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::propose_upgrade(&env, &admin, &stored_admin, new_wasm_hash)
+    }
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+    /// Apply the pending upgrade once its timelock has elapsed. Admin-only.
+    /// Emits `(contract, upgraded)`.
+    pub fn execute_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::execute_upgrade(&env, &admin, &stored_admin);
+    }
 
-        env.events().publish(
-            (symbol_short!("contract"), symbol_short!("upgraded")),
-            new_wasm_hash,
-        );
+    /// Withdraw the pending upgrade. Admin-only. Emits `(upgrade, cancelled)`.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::cancel_upgrade(&env, &admin, &stored_admin);
+    }
+
+    /// The upgrade currently waiting out its timelock, if any.
+    pub fn get_pending_upgrade(env: Env) -> Option<stellar_upgradeable::PendingUpgrade> {
+        stellar_upgradeable::pending_upgrade(&env)
+    }
+
+    /// Nominate a new admin (step 1 of 2). Admin-only. Emits `(admin, proposed)`.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::propose_admin(&env, &admin, &stored_admin, &new_admin);
+    }
+
+    /// Accept a nomination (step 2 of 2). Must be signed by the nominee.
+    /// Emits `(admin, accepted)`.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        let accepted = stellar_upgradeable::accept_admin(&env, &new_admin, &stored_admin);
+        <class 'set'>
+    }
+
+    /// Withdraw a pending admin nomination. Admin-only. Emits `(admin, cancelled)`.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .expect("Not initialized");
+        stellar_upgradeable::cancel_admin_transfer(&env, &admin, &stored_admin);
+    }
+
+    /// The nominated-but-not-yet-accepted admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        stellar_upgradeable::pending_admin(&env)
     }
 }
 

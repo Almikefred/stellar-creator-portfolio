@@ -354,7 +354,10 @@ The app uses `output: 'standalone'` (Next.js) and can be deployed to:
 2. The pre-commit hook runs TypeScript check (warning), secret scan (gitleaks, if installed), and a 10 MB file-size guard
 3. Soroban contracts require `overflow-checks = true` in `[profile.release]`
 4. Looking for open work? [`docs/IMPLEMENTATION_NOTES.md`](./docs/IMPLEMENTATION_NOTES.md) tracks partially-scoped backlog items (e.g. STT integration, escrow slippage protection, OCR KYC) with implementation specs already written out
-5. Deploying or upgrading a Soroban contract? See [`docs/contracts.md`](./docs/contracts.md) for how CI deploys to Testnet/Mainnet, where the resulting contract addresses go, and how to upgrade a live contract safely
+5. Deploying or upgrading a Soroban contract? See [`docs/contracts.md`](./docs/contracts.md) for how CI deploys to Testnet/Mainnet, where the resulting contract addresses go, and how to upgrade a live contract safely (48h-timelocked upgrades and two-step admin transfer)
+   - What on-chain "verified" means (KYC levels, tiers, social proofs, expiry, revocation): [`docs/identity-verification.md`](./docs/identity-verification.md)
+   - Governance vote weighting and proposal snapshots: [`docs/governance-voting.md`](./docs/governance-voting.md)
+   - Referral self-referral and loop rules: [`docs/referrals.md`](./docs/referrals.md)
 6. Restoring the database or running the quarterly restore drill? Follow [`docs/POSTGRES_RESTORE_RUNBOOK.md`](./docs/POSTGRES_RESTORE_RUNBOOK.md)
 7. Freelancer payouts and receipt generation: See [`docs/PAYMENTS.md`](./docs/PAYMENTS.md)
 8. Running integration tests against a Docker PostgreSQL instance: See [`docs/TEST_DATABASE.md`](./docs/TEST_DATABASE.md)

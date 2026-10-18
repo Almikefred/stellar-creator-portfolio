@@ -108,32 +108,91 @@ for the schema; the app reads them via `lib/contracts/deployments.ts`.
 
 ## Upgrading a contract that is already live
 
-Every contract in `backend/contracts/*` exposes an admin-gated `upgrade`
-entrypoint (see e.g. `backend/contracts/escrow/src/lib.rs`):
+Upgrades are **timelocked**, and the admin role moves in **two steps**
+(Issue #1564). The shared logic lives in
+[`backend/contracts/upgradeable`](../backend/contracts/upgradeable/src/lib.rs)
+(crate `stellar-upgradeable`). Every contract with an admin calls into it:
+bounty, escrow, freelancer, governance, oracle, identity, stellar_insights,
+core, referral and insurance.
 
-```rust
-pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
-    admin.require_auth();
-    // ...asserts `admin` matches the stored platform admin...
-    env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
-    env.events().publish((symbol_short!("contract"), symbol_short!("upgraded")), new_wasm_hash);
-}
+### Why
+
+Before this change, each contract had an `upgrade(admin, new_wasm_hash)`
+entrypoint that swapped the code **in the same transaction**. Anyone holding
+the admin key, including an attacker who had stolen it, could replace a
+contract's logic (for example to drain escrowed funds) with no warning to
+users. The admin role also couldn't be rotated safely. It was either fixed
+forever or set once through `set_admin`, with nothing to stop a typo from
+handing it to an address no one controls.
+
+### Entrypoints (same on every contract)
+
+| Entrypoint | Who signs | Effect |
+|---|---|---|
+| `propose_upgrade(admin, new_wasm_hash) -> u64` | admin | Records the pending upgrade and returns `executable_at` (now + 48h). A new proposal replaces the old one and restarts the clock. |
+| `execute_upgrade(admin)` | admin | Swaps in the pending wasm if `now >= executable_at`. |
+| `cancel_upgrade(admin)` | admin | Drops the pending upgrade. |
+| `get_pending_upgrade() -> Option<PendingUpgrade>` | — | `{ wasm_hash, proposed_at, executable_at }` |
+| `propose_admin(admin, new_admin)` | admin | Nominates a successor. Nothing changes yet. |
+| `accept_admin(new_admin)` | **nominee** | Completes the transfer, so the nominee must prove they control the key. |
+| `cancel_admin_transfer(admin)` | admin | Drops the nomination. |
+| `get_pending_admin() -> Option<Address>` | — | The current nominee, if any. |
+
+The instant `upgrade` entrypoint has been **removed**. The timelock is the
+constant `UPGRADE_TIMELOCK_SECS` (48 hours) on every network.
+
+```mermaid
+sequenceDiagram
+    participant A as Admin
+    participant C as Contract
+    participant I as Indexer / users
+    A->>C: propose_upgrade(admin, hash)
+    C-->>I: event (upgrade, proposed) → (hash, executable_at)
+    Note over I: ≥ 48h to inspect the new wasm,<br/>exit positions, or raise alarm
+    alt problem found
+        A->>C: cancel_upgrade(admin)
+        C-->>I: event (upgrade, cancelled) → hash
+    else timelock elapsed
+        A->>C: execute_upgrade(admin)
+        C-->>I: event (contract, upgraded) → hash
+    end
 ```
 
-This replaces the contract's executable code **in place** — the contract ID
-(and therefore every integrator's config, every reference in the frontend's
-`NEXT_PUBLIC_*_CONTRACT_ID`, every other contract that calls into it) stays
-the same. Persistent storage is untouched by the upgrade itself, so any
-storage-shape change in the new code must be handled by the new code reading
-old-shape data (a migration function, or defensive deserialization) — Soroban
-does not migrate storage for you.
+### Events
 
-Safe upgrade procedure:
+| Topics | Data |
+|---|---|
+| `(upgrade, proposed)` | `(wasm_hash: BytesN<32>, executable_at: u64)` |
+| `(upgrade, cancelled)` | `wasm_hash` |
+| `(contract, upgraded)` | `wasm_hash`. Same shape as the old instant upgrade, so existing indexer mappings still work. |
+| `(admin, proposed)` | `(current_admin, nominee)` |
+| `(admin, accepted)` | `(previous_admin, new_admin)` |
+| `(admin, cancelled)` | `nominee` |
+
+Indexers and monitoring should alert on `(upgrade, proposed)`. That event is
+users' advance notice of a code change. Read events with Soroban RPC
+[`getEvents`](https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getEvents).
+
+### Errors
+
+These surface as `Error(Contract, #n)`. The codes start at 900 so they never
+overlap a contract's own error enum.
+
+| Code | Variant | Meaning |
+|---|---|---|
+| 900 | `Unauthorized` | Caller is not the stored admin |
+| 901 | `NoPendingUpgrade` | `execute_upgrade` or `cancel_upgrade` was called with nothing pending |
+| 902 | `TimelockNotElapsed` | `execute_upgrade` was called before `executable_at` |
+| 903 | `NoPendingAdmin` | `accept_admin` or `cancel_admin_transfer` was called with no nominee |
+| 904 | `NotPendingAdmin` | `accept_admin` was signed by someone other than the nominee |
+| 905 | `SameAdmin` | `propose_admin` nominated the current admin |
+
+### Procedure
 
 1. Build and optimize the new `.wasm` the same way CI does (`cargo build
    --release --target wasm32v1-none`, then `stellar contract
    optimize`) so the deployed bytecode matches what was reviewed.
-2. Upload the new wasm to get its hash:
+2. Upload it to get its hash:
    `stellar contract upload --wasm <path> --source <admin-identity> --network <network>`.
 3. Simulate the `upgrade` call first (`stellar contract invoke --is-view`
    where supported, or a Testnet dry run) to confirm the new wasm hash and

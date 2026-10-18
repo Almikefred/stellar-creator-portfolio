@@ -489,7 +489,10 @@ impl StellarInsights {
         Self::load_reputation(&env, creator)
     }
 
-    // ── Issue #732: Contract upgrade mechanism ────────────────────────────────
+    // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
+    //
+    // Replaces the old instant `upgrade` entrypoint. Shared logic lives in
+    // `stellar-upgradeable`; see docs/contracts.md (Upgrading a live contract).
 
     /// Upgrade the contract WASM. Only the governance multisig (admin) may call this.
     /// Emits an `upgraded` event with the new wasm hash.
@@ -497,7 +500,11 @@ impl StellarInsights {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+    /// Withdraw the pending upgrade. Admin-only. Emits `(upgrade, cancelled)`.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = Self::get_admin(&env);
+        stellar_upgradeable::cancel_upgrade(&env, &admin, &stored_admin);
+    }
 
         env.events().publish(
             (symbol_short!("contract"), symbol_short!("upgraded")),

@@ -1,0 +1,19 @@
+[package]
+name = "stellar-upgradeable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Plain library (no `#[contract]`): linked into every canonical contract to
+# provide the shared timelocked-upgrade + two-step admin-transfer pattern
+# (Issue #1564). See docs/contracts.md (Upgrading a live contract).
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

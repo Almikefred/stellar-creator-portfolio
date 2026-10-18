@@ -37,9 +37,9 @@ pub struct Proposal {
 
 /// Weighted vote cast by a token holder.
 ///
-/// `weight` is the voter's token balance at vote time, expressed in the
-/// token's smallest denomination.  Callers supply this value; a production
-/// deployment would read it from an on-chain token contract.
+/// `weight` is the voter's checkpointed voting power at the proposal's
+/// snapshot ledger (Issue #1565), in the voting token's smallest
+/// denomination. It is read on-chain, never supplied by the caller.
 #[contracttype]
 pub struct TokenVote {
     pub proposal_id: u64,
@@ -72,6 +72,93 @@ pub struct ProposalParam {
     pub target_min_budget: Option<i128>,
     /// New maximum bounty budget (None = no change).
     pub target_max_budget: Option<i128>,
+}
+
+/// A voter's deposited voting power from `ledger` onwards (Issue #1565).
+///
+/// Checkpoints are append-only per account (one entry per ledger in which the
+/// balance changed), so `get_past_votes` can answer "how much power did this
+/// account have at ledger N" without trusting the caller.
+#[contracttype]
+#[derive(Clone)]
+pub struct VotingCheckpoint {
+    pub ledger: u32,
+    pub votes: i128,
+}
+
+// ── Issue #1565: voting-power checkpoints ────────────────────────────────────
+
+const LEDGER_TTL: u32 = 30 * 24 * 3600 / 5; // ~30 days (5 second blocks)
+
+fn ckpt_count_key(env: &Env, account: &Address) -> (Symbol, Address) {
+    (Symbol::new(env, "vp_n"), account.clone())
+}
+
+fn ckpt_key(env: &Env, account: &Address, index: u32) -> (Symbol, Address, u32) {
+    (Symbol::new(env, "vp_ck"), account.clone(), index)
+}
+
+fn ckpt_count(env: &Env, account: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<(Symbol, Address), u32>(&ckpt_count_key(env, account))
+        .unwrap_or(0)
+}
+
+fn ckpt_at(env: &Env, account: &Address, index: u32) -> VotingCheckpoint {
+    env.storage()
+        .persistent()
+        .get::<(Symbol, Address, u32), VotingCheckpoint>(&ckpt_key(env, account, index))
+        .expect("Checkpoint missing")
+}
+
+/// Record `votes` as `account`'s power from the current ledger onwards.
+/// Multiple changes within one ledger collapse into a single checkpoint.
+fn write_checkpoint(env: &Env, account: &Address, votes: i128) {
+    let ledger = env.ledger().sequence();
+    let n = ckpt_count(env, account);
+    let cp = VotingCheckpoint { ledger, votes };
+
+    if n > 0 && ckpt_at(env, account, n - 1).ledger == ledger {
+        let key = ckpt_key(env, account, n - 1);
+        env.storage().persistent().set(&key, &cp);
+        env.storage().persistent().extend_ttl(&key, 4096, LEDGER_TTL);
+        return;
+    }
+
+    let key = ckpt_key(env, account, n);
+    let count_key = ckpt_count_key(env, account);
+    env.storage().persistent().set(&key, &cp);
+    env.storage().persistent().set(&count_key, &(n + 1));
+    env.storage().persistent().extend_ttl(&key, 4096, LEDGER_TTL);
+    env.storage().persistent().extend_ttl(&count_key, 4096, LEDGER_TTL);
+}
+
+/// Voting power of `account` as of the end of `ledger` (binary search over
+/// checkpoints). Returns 0 if the account had no deposit by then.
+fn votes_at(env: &Env, account: &Address, ledger: u32) -> i128 {
+    let n = ckpt_count(env, account);
+    if n == 0 {
+        return 0;
+    }
+    let last = ckpt_at(env, account, n - 1);
+    if last.ledger <= ledger {
+        return last.votes;
+    }
+    if ckpt_at(env, account, 0).ledger > ledger {
+        return 0;
+    }
+    // Largest index whose checkpoint ledger is <= `ledger`.
+    let (mut lo, mut hi) = (0u32, n - 1);
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        if ckpt_at(env, account, mid).ledger <= ledger {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    ckpt_at(env, account, lo).votes
 }
 
 #[contract]
@@ -207,6 +294,19 @@ impl GovernanceContract {
             (proposal_id, proposer, proposal.voting_deadline),
         );
 
+        // Issue #1565: freeze voting power at the ledger *before* creation so
+        // deposits made in the same ledger as the proposal (e.g. bundled with a
+        // borrow) carry no weight. Stored beside the proposal rather than in it
+        // so the `Proposal` storage shape is unchanged.
+        let snapshot_ledger = env.ledger().sequence().saturating_sub(1);
+        let snapshot_key = (Symbol::new(&env, "snapshot"), proposal_id);
+        env.storage().persistent().set(&snapshot_key, &snapshot_ledger);
+        env.storage().persistent().extend_ttl(&snapshot_key, 4096, ledger_ttl);
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("snapshot")),
+            (proposal_id, snapshot_ledger),
+        );
+
         proposal_id
     }
 
@@ -303,18 +403,30 @@ impl GovernanceContract {
 
     /// Cast a token-weighted vote on a proposal.
     ///
-    /// `token_weight` is the caller's token balance used as vote weight.  The
-    /// contract accumulates weighted tallies (`yes_votes` / `no_votes`) so that
-    /// large token holders have proportionally more influence.
+    /// The vote weight is the voter's checkpointed voting power at the
+    /// proposal's snapshot ledger (Issue #1565) — tokens deposited or
+    /// transferred in after the proposal was created carry no weight on it.
+    /// Previously the caller supplied the weight directly, which let anyone
+    /// claim arbitrary power or vote with briefly borrowed tokens.
     pub fn vote_weighted(
         env: Env,
         voter: Address,
         proposal_id: u64,
         vote_yes: bool,
-        token_weight: u64,
     ) -> bool {
         voter.require_auth();
-        assert!(token_weight > 0, "Token weight must be positive");
+
+        // Deny-by-default: proposals created before snapshots existed have no
+        // snapshot ledger and cannot take weighted votes.
+        let snapshot_key = (Symbol::new(&env, "snapshot"), proposal_id);
+        let snapshot_ledger: u32 = env
+            .storage()
+            .persistent()
+            .get::<(Symbol, u64), u32>(&snapshot_key)
+            .expect("Proposal has no voting snapshot");
+        let power = votes_at(&env, &voter, snapshot_ledger);
+        assert!(power > 0, "No voting power at snapshot");
+        let token_weight: u64 = u64::try_from(power).expect("Voting power overflow");
 
         let proposal_key = (Symbol::new(&env, "proposal"), proposal_id);
         let mut proposal = env
@@ -499,6 +611,99 @@ impl GovernanceContract {
             .persistent()
             .get::<(Symbol, u64), ExecutionTimelock>(&tl_key)
             .expect("Proposal not queued")
+    }
+
+    // ── Issue #1565: Checkpointed voting power ───────────────────────────────
+
+    /// Set the governance token whose deposits confer voting power. Admin-only
+    /// and set-once: swapping the token would invalidate existing checkpoints.
+    pub fn set_voting_token(env: Env, admin: Address, token: Address) {
+        admin.require_auth();
+        let config = Self::get_config(env.clone());
+        assert_eq!(admin, config.admin_address, "Only admin can set voting token");
+        let key = Symbol::new(&env, "vote_token");
+        assert!(!env.storage().persistent().has(&key), "Voting token already set");
+        env.storage().persistent().set(&key, &token);
+        env.storage().persistent().extend_ttl(&key, 4096, LEDGER_TTL);
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("vp_token")),
+            (token,),
+        );
+    }
+
+    /// The governance token, if configured.
+    pub fn get_voting_token(env: Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get::<Symbol, Address>(&Symbol::new(&env, "vote_token"))
+    }
+
+    /// Lock `amount` governance tokens in this contract to gain voting power.
+    /// Power counts only for proposals created in a later ledger.
+    pub fn deposit_votes(env: Env, account: Address, amount: i128) -> i128 {
+        account.require_auth();
+        assert!(amount > 0, "Amount must be positive");
+        let token = Self::get_voting_token(env.clone()).expect("Voting token not set");
+
+        soroban_sdk::token::Client::new(&env, &token).transfer(
+            &account,
+            &env.current_contract_address(),
+            &amount,
+        );
+
+        let current = votes_at(&env, &account, env.ledger().sequence());
+        let updated = current.checked_add(amount).expect("Voting power overflow");
+        write_checkpoint(&env, &account, updated);
+
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("vp_dep")),
+            (account, amount, updated),
+        );
+        updated
+    }
+
+    /// Unlock `amount` governance tokens. Votes already cast are unaffected
+    /// (they used the snapshot), and the withdrawn tokens can't be re-used on
+    /// any proposal whose snapshot predates a later re-deposit.
+    pub fn withdraw_votes(env: Env, account: Address, amount: i128) -> i128 {
+        account.require_auth();
+        assert!(amount > 0, "Amount must be positive");
+        let token = Self::get_voting_token(env.clone()).expect("Voting token not set");
+
+        let current = votes_at(&env, &account, env.ledger().sequence());
+        assert!(current >= amount, "Insufficient voting power");
+        let updated = current - amount;
+        write_checkpoint(&env, &account, updated);
+
+        soroban_sdk::token::Client::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &account,
+            &amount,
+        );
+
+        env.events().publish(
+            (symbol_short!("gov"), symbol_short!("vp_wd")),
+            (account, amount, updated),
+        );
+        updated
+    }
+
+    /// Current voting power of `account`.
+    pub fn get_votes(env: Env, account: Address) -> i128 {
+        votes_at(&env, &account, env.ledger().sequence())
+    }
+
+    /// Voting power of `account` as of the end of `ledger`.
+    pub fn get_past_votes(env: Env, account: Address, ledger: u32) -> i128 {
+        votes_at(&env, &account, ledger)
+    }
+
+    /// Ledger at which voting power is measured for `proposal_id`.
+    pub fn get_proposal_snapshot(env: Env, proposal_id: u64) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<(Symbol, u64), u32>(&(Symbol::new(&env, "snapshot"), proposal_id))
+            .expect("Proposal has no voting snapshot")
     }
 
     // ── Issue #749: Quorum enforcement ───────────────────────────────────────
@@ -697,21 +902,60 @@ impl GovernanceContract {
         );
     }
 
-    // ── Issue #732: Contract upgrade mechanism ────────────────────────────────
+    // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
+    //
+    // Replaces the old instant `upgrade` entrypoint. Shared logic lives in
+    // `stellar-upgradeable`; see docs/contracts.md (Upgrading a live contract).
 
-    /// Upgrade the contract WASM. Only the governance admin multisig may call this.
-    /// Emits an `upgraded` event with the new wasm hash.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) {
-        admin.require_auth();
-        let config = Self::get_config(env.clone());
-        assert_eq!(admin, config.admin_address, "unauthorized");
+    /// Propose a WASM upgrade. Admin-only. Returns the ledger timestamp after
+    /// which `execute_upgrade` may be called (now + 48h). Emits
+    /// `(upgrade, proposed)`.
+    pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> u64 {
+        let stored_admin: Address = Self::get_config(env.clone()).admin_address;
+        stellar_upgradeable::propose_upgrade(&env, &admin, &stored_admin, new_wasm_hash)
+    }
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+    /// Apply the pending upgrade once its timelock has elapsed. Admin-only.
+    /// Emits `(contract, upgraded)`.
+    pub fn execute_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = Self::get_config(env.clone()).admin_address;
+        stellar_upgradeable::execute_upgrade(&env, &admin, &stored_admin);
+    }
 
-        env.events().publish(
-            (symbol_short!("contract"), symbol_short!("upgraded")),
-            new_wasm_hash,
-        );
+    /// Withdraw the pending upgrade. Admin-only. Emits `(upgrade, cancelled)`.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = Self::get_config(env.clone()).admin_address;
+        stellar_upgradeable::cancel_upgrade(&env, &admin, &stored_admin);
+    }
+
+    /// The upgrade currently waiting out its timelock, if any.
+    pub fn get_pending_upgrade(env: Env) -> Option<stellar_upgradeable::PendingUpgrade> {
+        stellar_upgradeable::pending_upgrade(&env)
+    }
+
+    /// Nominate a new admin (step 1 of 2). Admin-only. Emits `(admin, proposed)`.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) {
+        let stored_admin: Address = Self::get_config(env.clone()).admin_address;
+        stellar_upgradeable::propose_admin(&env, &admin, &stored_admin, &new_admin);
+    }
+
+    /// Accept a nomination (step 2 of 2). Must be signed by the nominee.
+    /// Emits `(admin, accepted)`.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        let stored_admin: Address = Self::get_config(env.clone()).admin_address;
+        let accepted = stellar_upgradeable::accept_admin(&env, &new_admin, &stored_admin);
+        <class 'set'>
+    }
+
+    /// Withdraw a pending admin nomination. Admin-only. Emits `(admin, cancelled)`.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) {
+        let stored_admin: Address = Self::get_config(env.clone()).admin_address;
+        stellar_upgradeable::cancel_admin_transfer(&env, &admin, &stored_admin);
+    }
+
+    /// The nominated-but-not-yet-accepted admin, if any.
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        stellar_upgradeable::pending_admin(&env)
     }
 }
 

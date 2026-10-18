@@ -695,7 +695,22 @@ impl BountyContract {
         platform + base_resource
     }
 
-    // ── Issue #732: Contract upgrade mechanism ────────────────────────────────
+    // ── Issue #1564: Timelocked upgrade + two-step admin transfer ─────────────
+    //
+    // Replaces the old instant `upgrade` entrypoint. Shared logic lives in
+    // `stellar-upgradeable`; see docs/contracts.md (Upgrading a live contract).
+
+    /// Propose a WASM upgrade. Admin-only. Returns the ledger timestamp after
+    /// which `execute_upgrade` may be called (now + 48h). Emits
+    /// `(upgrade, proposed)`.
+    pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> u64 {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<Symbol, Address>(&Symbol::new(&env, "bounty_admin"))
+            .expect("Contract admin not set");
+        stellar_upgradeable::propose_upgrade(&env, &admin, &stored_admin, new_wasm_hash)
+    }
 
     /// Upgrade the contract WASM. Only the governance multisig (contract admin)
     /// may call this. Emits an `upgraded` event with the new wasm hash.
@@ -706,11 +721,20 @@ impl BountyContract {
         let stored_admin: Address = env
             .storage()
             .persistent()
-            .get::<Symbol, Address>(&stored_admin_key)
+            .get::<Symbol, Address>(&Symbol::new(&env, "bounty_admin"))
             .expect("Contract admin not set");
-        assert_eq!(admin, stored_admin, "unauthorized");
+        stellar_upgradeable::execute_upgrade(&env, &admin, &stored_admin);
+    }
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+    /// Withdraw the pending upgrade. Admin-only. Emits `(upgrade, cancelled)`.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<Symbol, Address>(&Symbol::new(&env, "bounty_admin"))
+            .expect("Contract admin not set");
+        stellar_upgradeable::cancel_upgrade(&env, &admin, &stored_admin);
+    }
 
         env.events().publish(
             (symbol_short!("contract"), symbol_short!("upgraded")),

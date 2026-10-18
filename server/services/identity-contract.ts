@@ -1,8 +1,14 @@
 /**
  * Thin wrapper around the Soroban identity contract's `verify_kyc` call
  * (Issue #782), used by the admin KYC review flow after a submission is
- * approved. Builds/simulates/signs/submits the invocation via the shared
- * `ContractService` and returns the transaction hash for audit purposes.
+ * approved, and `revoke_kyc` (Issue #1567) for withdrawing it. Builds/
+ * simulates/signs/submits the invocation via the shared `ContractService`
+ * and returns the transaction hash for audit purposes.
+ *
+ * What "verified" means on-chain — KYC levels vs. verification tiers vs.
+ * social proofs, who may issue each, the one-year KYC expiry, and how
+ * revocation reads back — is specified in docs/identity-verification.md.
+ * Read that before deriving any trust badge from these attestations.
  */
 
 import { Keypair } from '@stellar/stellar-sdk';
@@ -41,6 +47,25 @@ export async function verifyKycOnChain(
     identityContractId(),
     'verify_kyc',
     [adminPublicKey, userAddress, kycSubmissionIdHash],
+    signer,
+  );
+}
+
+/**
+ * Calls `revoke_kyc(admin, user)` on the identity contract, signed by the
+ * platform admin key. Removes the user's KYC attestation so `check_kyc`
+ * returns false at every level — a revoked user reads exactly like one who
+ * was never verified. Fails on-chain if the user has no attestation.
+ */
+export async function revokeKycOnChain(userAddress: string): Promise<string> {
+  const adminSecret = await getSecret('STELLAR_ADMIN_SECRET');
+  const signer = new LocalSigner(adminSecret);
+  const adminPublicKey = Keypair.fromSecret(adminSecret).publicKey();
+
+  return contractService.invokeContractMethod(
+    identityContractId(),
+    'revoke_kyc',
+    [adminPublicKey, userAddress],
     signer,
   );
 }
